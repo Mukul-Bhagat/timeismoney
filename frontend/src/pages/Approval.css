@@ -1,0 +1,421 @@
+/* Approval Page Styles */
+
+.approval-error {
+  padding: 12px 16px;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #dc2626;
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+.approval-loading {
+  text-align: center;
+  padding: 48px;
+  color: #64748b;
+}
+
+/* Project List View */
+.approval-project-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 24px;
+  margin-top: 24px;
+}
+
+.approval-project-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.approval-project-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.approval-project-card h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.approval-project-card p {
+  margin: 4px 0;
+  font-size: 14px;
+  color: #64748b;
+}
+
+.approval-project-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.approval-submitted-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+/* Project Detail View (Modal) */
+.approval-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.approval-modal {
+  background: white;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 1400px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 25px rgba(0, 0, 0, 0.15);
+}
+
+.approval-modal-header {
+  padding: 24px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
+.approval-modal-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.approval-modal-header p {
+  margin: 4px 0;
+  font-size: 14px;
+  color: #64748b;
+}
+
+.approval-modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.approval-modal-close:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.approval-modal-content {
+  padding: 24px;
+  overflow-x: auto;
+  flex: 1;
+}
+
+/* Approval Table */
+.approval-table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+
+.approval-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 800px;
+}
+
+.approval-table thead {
+  background: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.approval-table th {
+  padding: 12px 8px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  border-bottom: 2px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.approval-table td {
+  padding: 12px 8px;
+  text-align: center;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 14px;
+}
+
+.approval-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+/* Sticky Columns */
+.approval-sticky-col {
+  position: sticky;
+  background: white;
+  z-index: 5;
+  min-width: 120px;
+  text-align: left !important;
+  padding-left: 16px !important;
+}
+
+/* First sticky column (Name) */
+.approval-sticky-col:first-of-type {
+  left: 0;
+}
+
+/* Second sticky column (Role) */
+.approval-sticky-col:nth-of-type(2) {
+  left: 120px; /* Width of first column */
+}
+
+.approval-table thead .approval-sticky-col {
+  background: #f8fafc;
+  z-index: 11;
+}
+
+.approval-table tbody tr:hover .approval-sticky-col {
+  background: #f8fafc;
+}
+
+/* Date Headers */
+.approval-date-header {
+  font-size: 11px;
+  font-weight: 500;
+  min-width: 60px;
+}
+
+/* Editable Inputs */
+.approval-input {
+  width: 100%;
+  max-width: 100px;
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.approval-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.approval-input.readonly {
+  background: #f8fafc;
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+/* Totals Row */
+.approval-totals-row {
+  background: #f8fafc;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.approval-totals-row td {
+  border-top: 2px solid #e2e8f0;
+  border-bottom: none;
+}
+
+.approval-totals-row .approval-sticky-col {
+  background: #f8fafc;
+}
+
+/* Modal Actions */
+.approval-modal-actions {
+  padding: 24px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.approval-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.approval-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.approval-btn-primary {
+  background: #2563eb;
+  color: white;
+}
+
+.approval-btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.approval-btn-secondary {
+  background: #f1f5f9;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+}
+
+.approval-btn-secondary:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+
+.approval-btn-success {
+  background: #10b981;
+  color: white;
+}
+
+.approval-btn-success:hover:not(:disabled) {
+  background: #059669;
+}
+
+/* Empty State */
+.approval-empty {
+  text-align: center;
+  padding: 48px;
+  color: #64748b;
+}
+
+.approval-empty h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  color: #1e293b;
+}
+
+.approval-empty p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+  .approval-project-list {
+    grid-template-columns: 1fr;
+  }
+
+  .approval-modal-overlay {
+    padding: 16px;
+  }
+
+  .approval-modal {
+    max-height: 95vh;
+  }
+
+  .approval-modal-header {
+    padding: 16px;
+  }
+
+  .approval-modal-content {
+    padding: 16px;
+  }
+
+  .approval-modal-actions {
+    padding: 16px;
+    flex-direction: column;
+  }
+
+  .approval-btn {
+    width: 100%;
+  }
+
+  .approval-table {
+    font-size: 12px;
+    min-width: 700px;
+  }
+
+  .approval-table th,
+  .approval-table td {
+    padding: 8px 4px;
+  }
+
+  .approval-sticky-col {
+    min-width: 100px;
+    padding-left: 12px !important;
+  }
+
+  .approval-date-header {
+    min-width: 50px;
+    font-size: 10px;
+  }
+
+  .approval-input {
+    max-width: 80px;
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .approval-modal-header h2 {
+    font-size: 20px;
+  }
+
+  .approval-table {
+    min-width: 600px;
+  }
+
+  .approval-sticky-col {
+    min-width: 80px;
+    font-size: 11px;
+  }
+
+  .approval-date-header {
+    min-width: 45px;
+  }
+
+  .approval-input {
+    max-width: 60px;
+  }
+}
+

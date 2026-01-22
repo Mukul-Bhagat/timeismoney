@@ -1,0 +1,141 @@
+.platform-container {
+  min-height: 100vh;
+  background: #f8fafc;
+  padding: 32px;
+}
+
+.platform-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 32px;
+}
+
+.platform-header h1 {
+  font-size: 32px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 8px 0;
+}
+
+.platform-header p {
+  font-size: 16px;
+  color: #64748b;
+  margin: 0;
+}
+
+.platform-signout {
+  padding: 10px 20px;
+  background-color: #f1f5f9;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.platform-signout:hover {
+  background-color: #e2e8f0;
+}
+
+.platform-error {
+  padding: 12px 16px;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #dc2626;
+  margin-bottom: 24px;
+}
+
+.platform-actions {
+  margin-bottom: 24px;
+}
+
+.platform-create-button {
+  padding: 12px 24px;
+  background-color: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.platform-create-button:hover {
+  background-color: #1d4ed8;
+}
+
+.platform-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 24px;
+}
+
+.platform-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 24px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.platform-card:hover {
+  border-color: #2563eb;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+  transform: translateY(-2px);
+}
+
+.platform-card-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 16px 0;
+}
+
+.platform-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.platform-card-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.platform-card-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.platform-card-value {
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.platform-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 64px 32px;
+  color: #64748b;
+}
+
+.platform-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+  font-size: 18px;
+  color: #64748b;
+}
+

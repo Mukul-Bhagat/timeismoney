@@ -1,0 +1,12 @@
+.layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.layout-content {
+  flex: 1;
+  margin-left: 240px;
+  background: #f8fafc;
+  min-height: 100vh;
+}
+
