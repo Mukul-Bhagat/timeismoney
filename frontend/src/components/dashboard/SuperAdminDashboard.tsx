@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../../config/supabase';
+import api from '../../config/api';
 import { formatDateIST } from '../../utils/timezone';
 import { colors } from '../../config/colors';
 import './Dashboard.css';
@@ -26,18 +26,11 @@ export function SuperAdminDashboard() {
 
   const fetchStats = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-
-      // Fetch organizations
-      const orgResponse = await fetch('http://localhost:5000/api/organizations', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      if (orgResponse.ok) {
-        const orgs = await orgResponse.json();
+      // Fetch organizations using axios API client
+      const response = await api.get('/api/organizations');
+      
+      if (response.data) {
+        const orgs = Array.isArray(response.data) ? response.data : [];
         setStats({
           totalOrganizations: orgs.length,
           activeOrganizations: orgs.length, // All are active for now

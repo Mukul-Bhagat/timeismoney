@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../config/supabase';
+import api from '../config/api';
 import { formatDateIST } from '../utils/timezone';
 import './OrganizationDashboard.css';
 
@@ -14,7 +14,7 @@ interface Organization {
 
 export function OrganizationDashboard() {
   const { id } = useParams<{ id: string }>();
-  const { profile, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,33 +29,22 @@ export function OrganizationDashboard() {
   const fetchOrganization = async (orgId: string) => {
     try {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
+      const response = await api.get(`/api/organizations/${orgId}`);
 
-      const response = await fetch(`http://localhost:5000/api/organizations/${orgId}`, {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      if (!response.ok) {
+      if (response.data) {
+        setOrganization(response.data);
+      } else {
         throw new Error('Failed to fetch organization');
       }
-
-      const data = await response.json();
-      setOrganization(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load organization');
+      setError(err.response?.data?.message || err.message || 'Failed to load organization');
     } finally {
       setLoading(false);
     }
   };
 
   const handleBack = () => {
-    if (profile?.role === 'SUPER_ADMIN' || profile?.roles.includes('SUPER_ADMIN')) {
+    if (user?.role === 'SUPER_ADMIN') {
       navigate('/platform');
     } else {
       navigate('/dashboard');

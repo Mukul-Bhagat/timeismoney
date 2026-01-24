@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../config/supabase';
+import api from '../config/api';
 import { CreateOrganizationModal } from '../components/CreateOrganizationModal';
 import { formatDateIST } from '../utils/timezone';
 import { colors } from '../config/colors';
@@ -16,45 +16,67 @@ interface Organization {
 }
 
 export function Platform() {
-  const { profile, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const safetyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (profile?.role !== 'SUPER_ADMIN') {
+    if (user?.role !== 'SUPER_ADMIN') {
       navigate('/dashboard');
       return;
     }
+    
+    // Clear any existing safety timeout
+    if (safetyTimeoutRef.current) {
+      clearTimeout(safetyTimeoutRef.current);
+      safetyTimeoutRef.current = null;
+    }
+    
+    // Safety timeout: if loading takes more than 8 seconds, show error
+    // This will be cleared when fetchOrganizations completes
+    safetyTimeoutRef.current = setTimeout(() => {
+      setError('Request is taking too long. The backend server may not be running. Please check http://localhost:5000');
+      setLoading(false);
+    }, 8000); // 8 second safety timeout
 
     fetchOrganizations();
-  }, [profile, navigate]);
+
+    return () => {
+      if (safetyTimeoutRef.current) {
+        clearTimeout(safetyTimeoutRef.current);
+        safetyTimeoutRef.current = null;
+      }
+    };
+  }, [user, navigate]);
 
   const fetchOrganizations = async () => {
     try {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
+      setError(null);
       
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      const response = await api.get('/api/organizations');
+      setOrganizations(Array.isArray(response.data) ? response.data : []);
+      setError(null);
+      
+      // Clear safety timeout since fetch completed successfully
+      if (safetyTimeoutRef.current) {
+        clearTimeout(safetyTimeoutRef.current);
+        safetyTimeoutRef.current = null;
       }
-
-      const response = await fetch('http://localhost:5000/api/organizations', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch organizations');
-      }
-
-      const data = await response.json();
-      setOrganizations(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load organizations');
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to load organizations';
+      setError(errorMessage);
+      setOrganizations([]);
+      
+      // Clear safety timeout since fetch completed (with error)
+      if (safetyTimeoutRef.current) {
+        clearTimeout(safetyTimeoutRef.current);
+        safetyTimeoutRef.current = null;
+      }
     } finally {
       setLoading(false);
     }
@@ -67,25 +89,7 @@ export function Platform() {
     timezone: string;
   }) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch('http://localhost:5000/api/organizations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify(data),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create organization');
-      }
+      await api.post('/api/organizations', data);
 
       // Refresh organizations list
       await fetchOrganizations();
@@ -102,14 +106,7 @@ export function Platform() {
     await signOut();
   };
 
-  if (loading && organizations.length === 0) {
-    return (
-      <div className="platform-container">
-        <div className="platform-loading">Loading...</div>
-      </div>
-    );
-  }
-
+  // Always show the page - don't block on loading
   return (
     <div className="platform-container">
       <div className="platform-header">
@@ -122,7 +119,25 @@ export function Platform() {
         </button>
       </div>
 
-      {error && <div className="platform-error">{error}</div>}
+      {error && (
+        <div className="platform-error">
+          <div style={{ marginBottom: '8px' }}>{error}</div>
+          <button
+            onClick={fetchOrganizations}
+            style={{
+              padding: '6px 12px',
+              background: '#dc2626',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '14px',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="platform-actions">
         <button
@@ -134,7 +149,14 @@ export function Platform() {
       </div>
 
       <div className="platform-grid">
-        {organizations.length === 0 ? (
+        {loading && organizations.length === 0 && !error ? (
+          <div className="platform-loading" style={{ gridColumn: '1 / -1' }}>
+            <div>Loading organizations...</div>
+            <div style={{ fontSize: '14px', color: '#64748b', marginTop: '8px' }}>
+              If this takes too long, the backend server may not be running on http://localhost:5000
+            </div>
+          </div>
+        ) : organizations.length === 0 ? (
           <div className="platform-empty">
             <p>No organizations yet. Create your first organization to get started.</p>
           </div>

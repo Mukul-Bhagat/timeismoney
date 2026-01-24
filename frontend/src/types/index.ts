@@ -41,8 +41,14 @@ export interface Project {
   start_date: string;
   end_date: string;
   status: ProjectStatus;
+  setup_status?: 'draft' | 'setup_done' | 'locked';
+  project_manager_id?: string;
   created_at: string;
   member_count?: number;
+  project_manager?: {
+    id: string;
+    email: string;
+  };
 }
 
 // Project member interface
@@ -142,10 +148,125 @@ export interface ProjectApprovalData {
   };
   date_range: string[];
   approval_rows: ProjectApprovalRow[];
+  submission_status?: {
+    total_members: number;
+    submitted_count: number;
+    pending_count: number;
+    all_submitted: boolean;
+    pending_users: string[];
+  };
 }
 
 // Project with submitted timesheets interface
 export interface ProjectWithSubmittedTimesheets extends Project {
   submitted_count: number;
+}
+
+// ============================================================================
+// Project Setup / Cost Planning Types
+// ============================================================================
+
+// Margin status type
+export type MarginStatus = 'green' | 'yellow' | 'red';
+
+// Setup status type
+export type SetupStatus = 'draft' | 'setup_done' | 'locked';
+
+// Project setup header interface
+export interface ProjectSetup {
+  id: string;
+  project_id: string;
+  total_weeks: number;
+  total_internal_hours: number;
+  total_internal_cost: number;
+  customer_rate_per_hour: number;
+  total_customer_amount: number;
+  gross_margin_percentage: number;
+  sold_cost_percentage: number;
+  current_margin_percentage: number;
+  margin_status: MarginStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+// Project role allocation (Excel row)
+export interface ProjectRoleAllocation {
+  id: string;
+  project_id: string;
+  role_id: string;
+  user_id: string;
+  hourly_rate: number;
+  total_hours: number;
+  total_amount: number;
+  row_order: number;
+  created_at: string;
+  updated_at: string;
+  role?: Role;
+  user?: {
+    id: string;
+    email: string;
+  };
+  weekly_hours?: ProjectWeeklyHours[];
+}
+
+// Project weekly hours (Excel cell)
+export interface ProjectWeeklyHours {
+  id: string;
+  allocation_id: string;
+  week_number: number;
+  hours: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// Project phase (week label)
+export interface ProjectPhase {
+  id: string;
+  project_id: string;
+  phase_name: string;
+  start_week: number;
+  end_week: number;
+  created_at: string;
+}
+
+// User hourly rate (auto-fill source)
+export interface UserHourlyRate {
+  id: string;
+  user_id: string;
+  role_id: string;
+  organization_id: string;
+  hourly_rate: number;
+  effective_from: string;
+  created_at: string;
+  updated_at: string;
+  user?: {
+    id: string;
+    email: string;
+  };
+  role?: Role;
+}
+
+// Complete project setup data (API response)
+export interface ProjectSetupData {
+  project: Project & {
+    project_manager?: {
+      id: string;
+      email: string;
+    };
+    setup_status?: SetupStatus;
+  };
+  setup: ProjectSetup;
+  allocations: ProjectRoleAllocation[];
+  phases: ProjectPhase[];
+}
+
+// Extended project interface with setup fields
+export interface ProjectWithSetup extends Project {
+  project_manager_id?: string;
+  setup_status?: SetupStatus;
+  project_manager?: {
+    id: string;
+    email: string;
+  };
 }
 

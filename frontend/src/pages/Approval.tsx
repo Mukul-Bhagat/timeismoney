@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../config/supabase';
+import api from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import type { ProjectWithSubmittedTimesheets, ProjectApprovalData, ProjectApprovalRow } from '../types';
 import { formatDate, calculateTotalHoursFromRows, calculateTotalAmount, calculateTotalQuote } from '../utils/approval';
@@ -8,7 +8,7 @@ import './Page.css';
 import './Approval.css';
 
 export function Approval() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const [projects, setProjects] = useState<ProjectWithSubmittedTimesheets[]>([]);
   const [selectedProject, setSelectedProject] = useState<ProjectApprovalData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -20,52 +20,40 @@ export function Approval() {
 
   // Check if user has access (ADMIN or MANAGER)
   useEffect(() => {
-    if (profile) {
+    if (user) {
       const hasAccess = 
-        profile.role === 'SUPER_ADMIN' ||
-        profile.roles.includes('ADMIN') ||
-        profile.roles.includes('MANAGER');
+        user.role === 'SUPER_ADMIN' ||
+        user.role === 'ADMIN' ||
+        user.role === 'MANAGER';
 
       if (!hasAccess) {
         setError('You do not have permission to access this page');
         setLoading(false);
       }
     }
-  }, [profile]);
+  }, [user]);
 
   // Fetch projects with submitted timesheets
   useEffect(() => {
-    if (profile && (profile.role === 'SUPER_ADMIN' || profile.roles.includes('ADMIN') || profile.roles.includes('MANAGER'))) {
+    if (user && (user.role === 'SUPER_ADMIN' || user.role === 'ADMIN' || user.role === 'MANAGER')) {
       fetchProjects();
     }
-  }, [profile]);
+  }, [user]);
 
   const fetchProjects = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      const response = await api.get('/api/approval/projects');
+
+      if (response.data.success) {
+        setProjects(response.data.projects || []);
+      } else {
+        throw new Error(response.data.message || 'Failed to fetch projects');
       }
-
-      const response = await fetch('http://localhost:5000/api/approval/projects', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch projects');
-      }
-
-      setProjects(data.projects || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch projects');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch projects');
     } finally {
       setLoading(false);
     }
@@ -76,23 +64,13 @@ export function Approval() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      const response = await api.get(`/api/approval/projects/${projectId}`);
+
+      if (!response.data.success) {
+        throw new Error(response.data.message || 'Failed to fetch project details');
       }
 
-      const response = await fetch(`http://localhost:5000/api/approval/projects/${projectId}`, {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch project details');
-      }
+      const data = response.data;
 
       // Initialize edited rows with current values
       const initialEdited: { [userId: string]: { rate: number; quote_amount: number | null } } = {};
@@ -104,7 +82,12 @@ export function Approval() {
       }
       setEditedRows(initialEdited);
 
-      setSelectedProject(data);
+      setSelectedProject({
+        project: data.project,
+        date_range: data.date_range,
+        approval_rows: data.approval_rows,
+        submission_status: data.submission_status,
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to fetch project details');
     } finally {
@@ -148,12 +131,6 @@ export function Approval() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
       // Prepare costing updates
       const costingUpdates = Object.entries(editedRows).map(([user_id, values]) => ({
         user_id,
@@ -161,19 +138,12 @@ export function Approval() {
         quote_amount: values.quote_amount,
       }));
 
-      const response = await fetch(`http://localhost:5000/api/approval/projects/${selectedProject.project.id}/costing`, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ costing_updates: costingUpdates }),
+      const response = await api.put(`/api/approval/projects/${selectedProject.project.id}/costing`, {
+        costing_updates: costingUpdates,
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to save costing');
+      if (!response.data.success) {
+        throw new Error(response.data.message || 'Failed to save costing');
       }
 
       // Refresh project detail
@@ -181,7 +151,7 @@ export function Approval() {
       
       alert('Costing saved successfully');
     } catch (err: any) {
-      setError(err.message || 'Failed to save costing');
+      setError(err.response?.data?.message || err.message || 'Failed to save costing');
     } finally {
       setSaving(false);
     }
@@ -198,32 +168,30 @@ export function Approval() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      const response = await api.post(`/api/approval/projects/${selectedProject.project.id}/approve`);
+
+      if (!response.data.success) {
+        // Check if it's a validation error (400) - show as info, not error
+        if (response.status === 400 && response.data.pending_count !== undefined) {
+          // This is a validation message, not an error
+          setError(null); // Clear any previous errors
+          // Show info message instead of error
+          const pendingList = response.data.pending_users?.length > 0 
+            ? `\n\nPending users: ${response.data.pending_users.join(', ')}`
+            : '';
+          alert(`${response.data.message}${pendingList}`);
+          return; // Don't treat as error
+        }
+        throw new Error(response.data.message || 'Failed to approve timesheets');
       }
 
-      const response = await fetch(`http://localhost:5000/api/approval/projects/${selectedProject.project.id}/approve`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to approve timesheets');
-      }
-
-      alert(`Successfully approved ${data.timesheets?.length || 0} timesheet(s)`);
+      alert(`Successfully approved ${response.data.timesheets?.length || 0} timesheet(s)`);
       
       // Refresh projects list and close modal
       await fetchProjects();
       handleCloseModal();
     } catch (err: any) {
-      setError(err.message || 'Failed to approve timesheets');
+      setError(err.response?.data?.message || err.message || 'Failed to approve timesheets');
     } finally {
       setApproving(false);
     }
@@ -233,28 +201,19 @@ export function Approval() {
     if (!selectedProject) return;
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch(
-        `http://localhost:5000/api/approval/projects/${selectedProject.project.id}/export/excel`,
+      const response = await api.get(
+        `/api/approval/projects/${selectedProject.project.id}/export/excel`,
         {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
+          responseType: 'blob',
         }
       );
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || 'Failed to export Excel');
+      if (response.status !== 200) {
+        throw new Error('Failed to export Excel');
       }
 
       // Download file
-      const blob = await response.blob();
+      const blob = response.data;
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -264,7 +223,7 @@ export function Approval() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (err: any) {
-      setError(err.message || 'Failed to export Excel');
+      setError(err.response?.data?.message || err.message || 'Failed to export Excel');
     }
   };
 
@@ -272,28 +231,19 @@ export function Approval() {
     if (!selectedProject) return;
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch(
-        `http://localhost:5000/api/approval/projects/${selectedProject.project.id}/export/pdf`,
+      const response = await api.get(
+        `/api/approval/projects/${selectedProject.project.id}/export/pdf`,
         {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
+          responseType: 'blob',
         }
       );
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || 'Failed to export PDF');
+      if (response.status !== 200) {
+        throw new Error('Failed to export PDF');
       }
 
       // Download file
-      const blob = await response.blob();
+      const blob = response.data;
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -303,7 +253,7 @@ export function Approval() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (err: any) {
-      setError(err.message || 'Failed to export PDF');
+      setError(err.response?.data?.message || err.message || 'Failed to export PDF');
     }
   };
 
@@ -402,7 +352,46 @@ export function Approval() {
               {loadingDetail ? (
                 <div className="approval-loading">Loading project details...</div>
               ) : (
-                <div className="approval-table-container">
+                <>
+                  {/* Submission Status Banner */}
+                  {selectedProject.submission_status && (
+                    <div
+                      style={{
+                        padding: '12px 16px',
+                        marginBottom: '16px',
+                        borderRadius: '8px',
+                        fontSize: '14px',
+                        backgroundColor: selectedProject.submission_status.all_submitted
+                          ? '#d1fae5'
+                          : '#fef3c7',
+                        border: `1px solid ${selectedProject.submission_status.all_submitted ? '#10b981' : '#f59e0b'}`,
+                        color: selectedProject.submission_status.all_submitted ? '#065f46' : '#92400e',
+                      }}
+                    >
+                      {selectedProject.submission_status.all_submitted ? (
+                        <div>
+                          <strong>✓ All timesheets submitted</strong> ({selectedProject.submission_status.submitted_count} of {selectedProject.submission_status.total_members} members)
+                          <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                            You can now approve this project.
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <strong>⚠ Approval not ready</strong>
+                          <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                            {selectedProject.submission_status.pending_count} of {selectedProject.submission_status.total_members} member(s) still need to submit their timesheets.
+                            {selectedProject.submission_status.pending_users.length > 0 && (
+                              <div style={{ marginTop: '4px', fontWeight: '500' }}>
+                                Pending: {selectedProject.submission_status.pending_users.join(', ')}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  <div className="approval-table-container">
                   <table className="approval-table">
                     <thead>
                       <tr>
@@ -478,7 +467,8 @@ export function Approval() {
                       </tr>
                     </tbody>
                   </table>
-                </div>
+                  </div>
+                </>
               )}
             </div>
 
@@ -507,7 +497,16 @@ export function Approval() {
               <button
                 className="approval-btn approval-btn-success"
                 onClick={handleApprove}
-                disabled={loadingDetail || approving}
+                disabled={
+                  loadingDetail || 
+                  approving || 
+                  (selectedProject.submission_status && !selectedProject.submission_status.all_submitted)
+                }
+                title={
+                  selectedProject.submission_status && !selectedProject.submission_status.all_submitted
+                    ? `Cannot approve: ${selectedProject.submission_status.pending_count} member(s) still need to submit their timesheets`
+                    : 'Approve all timesheets for this project'
+                }
               >
                 {approving ? 'Approving...' : 'Approve Project'}
               </button>

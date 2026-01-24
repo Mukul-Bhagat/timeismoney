@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../config/supabase';
+import api from '../config/api';
 import { colors } from '../config/colors';
 import { RoleCard } from '../components/roles/RoleCard';
 import { CreateRoleModal } from '../components/roles/CreateRoleModal';
@@ -10,7 +10,7 @@ import './Page.css';
 import '../components/roles/Roles.css';
 
 export function Roles() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,27 +27,10 @@ export function Roles() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch('http://localhost:5000/api/roles', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch roles');
-      }
-
-      setRoles(data.roles || []);
+      const response = await api.get('/api/roles');
+      setRoles(response.data.roles || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch roles');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch roles');
     } finally {
       setLoading(false);
     }
@@ -65,7 +48,7 @@ export function Roles() {
 
   // Check if user has ADMIN or SUPER_ADMIN role
   const canManageRoles =
-    profile?.role === 'SUPER_ADMIN' || profile?.roles.includes('ADMIN');
+    user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN';
 
   if (!canManageRoles) {
     return (

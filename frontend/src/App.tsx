@@ -13,33 +13,62 @@ import { ManageUsers } from './pages/ManageUsers';
 import { Roles } from './pages/Roles';
 import { Profile } from './pages/Profile';
 import { OrganizationDashboard } from './pages/OrganizationDashboard';
+import { ProjectSetup } from './pages/ProjectSetup';
+import { jwtDecode } from 'jwt-decode';
+
+interface JWTPayload {
+  userId: string;
+  email: string;
+  role: string;
+  organizationId: string | null;
+  timezone: string;
+  iat?: number;
+  exp?: number;
+}
 
 function App() {
-  const { user, profile, loading } = useAuth();
+  const { user, loading, error: authError } = useAuth();
+
+  // Helper to get user from token if state not ready
+  const getCurrentUser = () => {
+    if (user) return user;
+    const token = localStorage.getItem('token');
+    if (token) {
+      try {
+        const decoded = jwtDecode<JWTPayload>(token);
+        if (decoded.exp && decoded.exp * 1000 < Date.now()) {
+          localStorage.removeItem('token');
+          return null;
+        }
+        return {
+          id: decoded.userId,
+          email: decoded.email,
+          role: decoded.role as any,
+          organizationId: decoded.organizationId,
+          timezone: decoded.timezone || 'Asia/Kolkata',
+        };
+      } catch {
+        localStorage.removeItem('token');
+        return null;
+      }
+    }
+    return null;
+  };
 
   // Memoize the redirect path to prevent infinite re-renders
   const defaultRedirectPath = useMemo(() => {
+    const currentUser = getCurrentUser();
     // If no user, go to signin
-    if (!user) return '/signin';
-    
-    // If user exists but no profile yet, still allow access (profile might be loading)
-    // But redirect to signin if profile is explicitly null after loading
-    if (profile === null && !loading) {
-      // Profile fetch failed - user might not exist in users table
-      // Allow them to stay on current page or redirect to signin
+    if (!currentUser) {
       return '/signin';
     }
     
-    // If we have a profile, determine redirect based on role
-    if (profile) {
-      const isSuperAdmin = profile.role === 'SUPER_ADMIN' || (profile.roles && profile.roles.length > 0 && profile.roles.includes('SUPER_ADMIN'));
-      return isSuperAdmin ? '/platform' : '/dashboard';
-    }
-    
-    // Default: if user exists but profile is still loading, go to dashboard
-    return '/dashboard';
-  }, [user, profile, loading]); // Include loading in dependencies
+    // Determine redirect based on role
+    const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
+    return isSuperAdmin ? '/platform' : '/dashboard';
+  }, [user]);
 
+  // Show loading screen only during initial load
   if (loading) {
     return (
       <div style={{ 
@@ -48,15 +77,31 @@ function App() {
         justifyContent: 'center', 
         alignItems: 'center', 
         height: '100vh',
-        gap: '16px'
+        gap: '16px',
+        padding: '20px'
       }}>
         <div>Loading...</div>
         <div style={{ fontSize: '12px', color: '#64748b' }}>
           Initializing authentication...
         </div>
-        <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '8px' }}>
-          If this takes too long, check the browser console for errors
-        </div>
+        {authError && (
+          <div style={{ 
+            marginTop: '20px',
+            padding: '16px',
+            backgroundColor: '#fef2f2',
+            border: '1px solid #fecaca',
+            borderRadius: '8px',
+            maxWidth: '600px',
+            width: '100%'
+          }}>
+            <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#dc2626', marginBottom: '8px' }}>
+              ❌ Error
+            </div>
+            <div style={{ fontSize: '12px', color: '#991b1b', marginBottom: '12px' }}>
+              {authError}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -66,7 +111,7 @@ function App() {
       <Routes>
         <Route
           path="/signin"
-          element={user ? <Navigate to={defaultRedirectPath} replace /> : <SignIn />}
+          element={getCurrentUser() ? <Navigate to={defaultRedirectPath} replace /> : <SignIn />}
         />
         <Route
           path="/platform"
@@ -105,6 +150,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Projects />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/project-setup/:projectId"
+          element={
+            <ProtectedRoute>
+              <ProjectSetup />
             </ProtectedRoute>
           }
         />

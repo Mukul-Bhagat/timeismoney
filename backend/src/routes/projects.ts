@@ -309,11 +309,15 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
 
     // Validate members
     if (!members || !Array.isArray(members) || members.length === 0) {
+      console.error('Project creation failed: No members provided');
+      console.error('Members received:', members);
       return res.status(400).json({
         success: false,
         message: 'At least one project member is required',
       });
     }
+
+    console.log('Validating members:', members.length, 'members provided');
 
     // Get organization ID
     let organizationId: string;
@@ -403,6 +407,10 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
     }
 
     // Insert project members
+    console.log('Creating project members:', JSON.stringify(members, null, 2));
+    console.log('Project ID:', project.id);
+    console.log('Organization ID:', organizationId);
+    
     const memberInserts = members.map((member: any) => ({
       project_id: project.id,
       user_id: member.user_id,
@@ -411,17 +419,29 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       assigned_at: getCurrentUTC().toISOString(),
     }));
 
+    console.log('Member inserts:', JSON.stringify(memberInserts, null, 2));
+
     const { data: insertedMembers, error: membersError } = await supabase
       .from('project_members')
       .insert(memberInserts)
       .select();
 
-    if (membersError || !insertedMembers) {
+    if (membersError) {
+      console.error('Error inserting project members:', membersError);
+      console.error('Error details:', JSON.stringify(membersError, null, 2));
       // Rollback: Delete the project if member insertion fails
       await supabase.from('projects').delete().eq('id', project.id);
-      
-      throw membersError || new Error('Failed to assign project members');
+      throw new Error(`Failed to assign project members: ${membersError.message || 'Unknown error'}`);
     }
+
+    if (!insertedMembers || insertedMembers.length === 0) {
+      console.error('No members were inserted, but no error was returned');
+      // Rollback: Delete the project if member insertion fails
+      await supabase.from('projects').delete().eq('id', project.id);
+      throw new Error('Failed to assign project members: No members were inserted');
+    }
+
+    console.log('Successfully inserted members:', insertedMembers.length);
 
     res.status(201).json({
       success: true,

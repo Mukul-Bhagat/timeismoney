@@ -2,12 +2,14 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { supabase } from "./config/supabase";
+import authRouter from "./routes/auth";
 import organizationsRouter from "./routes/organizations";
 import rolesRouter from "./routes/roles";
 import usersRouter from "./routes/users";
 import projectsRouter from "./routes/projects";
 import timesheetsRouter from "./routes/timesheets";
 import approvalRouter from "./routes/approval";
+import projectSetupRouter from "./routes/projectSetup";
 
 dotenv.config();
 
@@ -21,12 +23,14 @@ app.get("/", (_req, res) => {
 });
 
 // API Routes
+app.use("/api/auth", authRouter);
 app.use("/api/organizations", organizationsRouter);
 app.use("/api/roles", rolesRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/timesheets", timesheetsRouter);
 app.use("/api/approval", approvalRouter);
+app.use("/api/project-setup", projectSetupRouter);
 
 // Test Supabase connection
 app.get("/test-db", async (_req, res) => {

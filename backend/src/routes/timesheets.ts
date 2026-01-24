@@ -123,37 +123,90 @@ router.get('/projects', verifyAuth, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Get projects where user is a member
+    console.log('Fetching projects for user:', req.user.id);
+
+    // Step 1: Get project_members for this user
     const { data: projectMembers, error: membersError } = await supabase
       .from('project_members')
-      .select(`
-        project_id,
-        role:roles(name),
-        project:projects(*)
-      `)
+      .select('project_id, role_id, user_id')
       .eq('user_id', req.user.id);
 
     if (membersError) {
+      console.error('Error fetching project_members:', membersError);
       throw membersError;
     }
 
-    // Format projects with role names
-    const projects = (projectMembers || [])
-      .filter((pm: any) => pm.project !== null)
-      .map((pm: any) => ({
-        ...pm.project,
-        role_name: pm.role?.name || 'N/A',
-      }));
+    console.log('Found project_members:', projectMembers?.length || 0);
+
+    if (!projectMembers || projectMembers.length === 0) {
+      // No projects assigned - return empty array (not an error)
+      return res.json({
+        success: true,
+        projects: [],
+      });
+    }
+
+    // Step 2: Get unique project IDs
+    const projectIds = [...new Set(projectMembers.map((pm: any) => pm.project_id))];
+    console.log('Project IDs:', projectIds);
+
+    // Step 3: Fetch projects
+    const { data: projects, error: projectsError } = await supabase
+      .from('projects')
+      .select('*')
+      .in('id', projectIds);
+
+    if (projectsError) {
+      console.error('Error fetching projects:', projectsError);
+      throw projectsError;
+    }
+
+    console.log('Found projects:', projects?.length || 0);
+
+    // Step 4: Get role names for each project member
+    const roleIds = [...new Set(projectMembers.map((pm: any) => pm.role_id))];
+    const { data: roles, error: rolesError } = await supabase
+      .from('roles')
+      .select('id, name')
+      .in('id', roleIds);
+
+    if (rolesError) {
+      console.error('Error fetching roles:', rolesError);
+      // Don't throw - just continue without role names
+    }
+
+    // Create a map of role_id -> role_name
+    const roleMap = new Map();
+    if (roles) {
+      roles.forEach((role: any) => {
+        roleMap.set(role.id, role.name);
+      });
+    }
+
+    // Step 5: Combine projects with role names
+    const projectsWithRoles = (projects || []).map((project: any) => {
+      // Find the project member entry for this project
+      const memberEntry = projectMembers.find((pm: any) => pm.project_id === project.id);
+      const roleName = memberEntry ? (roleMap.get(memberEntry.role_id) || 'N/A') : 'N/A';
+
+      return {
+        ...project,
+        role_name: roleName,
+      };
+    });
+
+    console.log('Returning projects with roles:', projectsWithRoles.length);
 
     res.json({
       success: true,
-      projects: projects || [],
+      projects: projectsWithRoles,
     });
   } catch (error: any) {
+    console.error('Error in /api/timesheets/projects:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch projects',
-      error: error.message,
+      error: error.message || 'Unknown error',
     });
   }
 });
@@ -165,34 +218,253 @@ router.get('/projects', verifyAuth, async (req: AuthRequest, res: Response) => {
 router.get('/', verifyAuth, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
+      console.error('GET /api/timesheets: No user in request');
       return res.status(401).json({
         success: false,
         message: 'Authentication required',
       });
     }
 
-    const { data: timesheets, error } = await supabase
+    console.log('GET /api/timesheets: Fetching timesheets for user:', req.user.id);
+
+    // First get timesheets - using service role key should bypass RLS
+    // Try a simple query first to test connection
+    console.log('GET /api/timesheets: Testing database connection...');
+    const { data: testData, error: testError } = await supabase
       .from('timesheets')
-      .select(`
-        *,
-        entries:timesheet_entries(*)
-      `)
+      .select('id')
+      .limit(1);
+    
+    if (testError) {
+      console.error('GET /api/timesheets: Database connection test failed:', testError);
+      console.error('Error code:', testError.code);
+      console.error('Error message:', testError.message);
+      return res.status(500).json({
+        success: false,
+        message: 'Database connection failed',
+        error: testError.message || 'Cannot connect to timesheets table',
+        code: testError.code,
+      });
+    }
+    
+    console.log('GET /api/timesheets: Database connection OK, querying timesheets for user...');
+    
+    const { data: timesheets, error: timesheetsError } = await supabase
+      .from('timesheets')
+      .select('*')
       .eq('user_id', req.user.id)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      throw error;
+    if (timesheetsError) {
+      console.error('GET /api/timesheets: Error fetching timesheets:', timesheetsError);
+      console.error('Error code:', timesheetsError.code);
+      console.error('Error message:', timesheetsError.message);
+      console.error('Error details:', JSON.stringify(timesheetsError, null, 2));
+      console.error('Error hint:', timesheetsError.hint);
+      
+      // Check if it's an RLS error
+      if (timesheetsError.message?.includes('RLS') || timesheetsError.message?.includes('policy') || timesheetsError.code === '42501') {
+        console.error('GET /api/timesheets: RLS policy error detected - service role key may not be configured correctly');
+        return res.status(500).json({
+          success: false,
+          message: 'Database access denied. Check RLS policies and service role key configuration.',
+          error: timesheetsError.message,
+        });
+      }
+      
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch timesheets from database',
+        error: timesheetsError.message || 'Database query failed',
+        code: timesheetsError.code,
+      });
     }
 
+    console.log('GET /api/timesheets: Found timesheets:', timesheets?.length || 0);
+
+    // If no timesheets, return empty array (this is not an error)
+    if (!timesheets || timesheets.length === 0) {
+      console.log('GET /api/timesheets: No timesheets found, returning empty array');
+      return res.json({
+        success: true,
+        timesheets: [],
+      });
+    }
+
+    // Get entries for all timesheets
+    const timesheetIds = timesheets.map((t: any) => t.id).filter((id: any) => id != null);
+    
+    if (timesheetIds.length === 0) {
+      console.log('GET /api/timesheets: No valid timesheet IDs, returning timesheets without entries');
+      return res.json({
+        success: true,
+        timesheets: timesheets.map((t: any) => ({ ...t, entries: [] })),
+      });
+    }
+
+    console.log('GET /api/timesheets: Fetching entries for', timesheetIds.length, 'timesheets');
+    
+    const { data: entries, error: entriesError } = await supabase
+      .from('timesheet_entries')
+      .select('*')
+      .in('timesheet_id', timesheetIds);
+
+    if (entriesError) {
+      console.error('GET /api/timesheets: Error fetching timesheet entries:', entriesError);
+      console.error('Error details:', JSON.stringify(entriesError, null, 2));
+      // Don't throw - return timesheets without entries rather than failing completely
+      return res.json({
+        success: true,
+        timesheets: timesheets.map((t: any) => ({ ...t, entries: [] })),
+      });
+    }
+
+    console.log('GET /api/timesheets: Found entries:', entries?.length || 0);
+
+    // Group entries by timesheet_id
+    const entriesMap = new Map<string, any[]>();
+    if (entries && Array.isArray(entries)) {
+      entries.forEach((entry: any) => {
+        if (entry && entry.timesheet_id) {
+          if (!entriesMap.has(entry.timesheet_id)) {
+            entriesMap.set(entry.timesheet_id, []);
+          }
+          entriesMap.get(entry.timesheet_id)!.push(entry);
+        }
+      });
+    }
+
+    // Combine timesheets with entries
+    const timesheetsWithEntries = timesheets.map((timesheet: any) => {
+      try {
+        return {
+          ...timesheet,
+          entries: entriesMap.get(timesheet.id) || [],
+        };
+      } catch (err) {
+        console.error('Error processing timesheet:', timesheet.id, err);
+        return {
+          ...timesheet,
+          entries: [],
+        };
+      }
+    });
+
+    console.log('GET /api/timesheets: Returning', timesheetsWithEntries.length, 'timesheets');
+    
     res.json({
       success: true,
-      timesheets: timesheets || [],
+      timesheets: timesheetsWithEntries,
     });
   } catch (error: any) {
+    console.error('GET /api/timesheets: Unexpected error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch timesheets',
-      error: error.message,
+      error: error?.message || 'Unknown error occurred',
+    });
+  }
+});
+
+/**
+ * GET /api/timesheets/history
+ * Get approved timesheets (for history view)
+ * MUST be defined BEFORE /:id route to avoid route conflicts
+ */
+router.get('/history', verifyAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    console.log('Fetching timesheet history for user:', req.user.id);
+
+    // Get approved timesheets
+    const { data: timesheets, error: timesheetsError } = await supabase
+      .from('timesheets')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .eq('status', 'APPROVED')
+      .order('approved_at', { ascending: false });
+
+    if (timesheetsError) {
+      console.error('Error fetching approved timesheets:', timesheetsError);
+      throw timesheetsError;
+    }
+
+    console.log('Found approved timesheets:', timesheets?.length || 0);
+
+    if (!timesheets || timesheets.length === 0) {
+      return res.json({
+        success: true,
+        timesheets: [],
+      });
+    }
+
+    // Get entries for all timesheets
+    const timesheetIds = timesheets.map((t: any) => t.id);
+    const { data: entries, error: entriesError } = await supabase
+      .from('timesheet_entries')
+      .select('*')
+      .in('timesheet_id', timesheetIds);
+
+    if (entriesError) {
+      console.error('Error fetching timesheet entries:', entriesError);
+      // Don't throw - return timesheets without entries
+    }
+
+    // Get projects for all timesheets
+    const projectIds = [...new Set(timesheets.map((t: any) => t.project_id))];
+    const { data: projects, error: projectsError } = await supabase
+      .from('projects')
+      .select('*')
+      .in('id', projectIds);
+
+    if (projectsError) {
+      console.error('Error fetching projects:', projectsError);
+      // Don't throw - return timesheets without project details
+    }
+
+    // Group entries by timesheet_id
+    const entriesMap = new Map();
+    if (entries) {
+      entries.forEach((entry: any) => {
+        if (!entriesMap.has(entry.timesheet_id)) {
+          entriesMap.set(entry.timesheet_id, []);
+        }
+        entriesMap.get(entry.timesheet_id).push(entry);
+      });
+    }
+
+    // Create project map
+    const projectMap = new Map();
+    if (projects) {
+      projects.forEach((project: any) => {
+        projectMap.set(project.id, project);
+      });
+    }
+
+    // Combine timesheets with entries and projects
+    const timesheetsWithData = timesheets.map((timesheet: any) => ({
+      ...timesheet,
+      entries: entriesMap.get(timesheet.id) || [],
+      project: projectMap.get(timesheet.project_id) || null,
+    }));
+
+    res.json({
+      success: true,
+      timesheets: timesheetsWithData,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/timesheets/history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch timesheet history',
+      error: error.message || 'Unknown error',
     });
   }
 });
@@ -635,47 +907,6 @@ router.post('/:id/submit', verifyAuth, async (req: AuthRequest, res: Response) =
     res.status(500).json({
       success: false,
       message: 'Failed to submit timesheet',
-      error: error.message,
-    });
-  }
-});
-
-/**
- * GET /api/timesheets/history
- * Get approved timesheets (for history view)
- */
-router.get('/history', verifyAuth, async (req: AuthRequest, res: Response) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required',
-      });
-    }
-
-    const { data: timesheets, error } = await supabase
-      .from('timesheets')
-      .select(`
-        *,
-        entries:timesheet_entries(*),
-        project:projects(*)
-      `)
-      .eq('user_id', req.user.id)
-      .eq('status', 'APPROVED')
-      .order('approved_at', { ascending: false });
-
-    if (error) {
-      throw error;
-    }
-
-    res.json({
-      success: true,
-      timesheets: timesheets || [],
-    });
-  } catch (error: any) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch timesheet history',
       error: error.message,
     });
   }

@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import { supabase } from '../config/supabase';
 import { verifyAuth, requireRole, AuthRequest } from '../middleware/auth';
 import { getCurrentUTC } from '../utils/timezone';
+import bcrypt from 'bcrypt';
+import { randomUUID } from 'crypto';
 
 const router = Router();
 
@@ -145,36 +147,54 @@ router.post(
         });
       }
 
-      // Create user in Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true, // Auto-confirm email
-      });
+      // Hash password with bcrypt
+      const saltRounds = 10;
+      const passwordHash = await bcrypt.hash(password, saltRounds);
 
-      if (authError || !authData.user) {
-        return res.status(400).json({
-          success: false,
-          message: 'Failed to create user in authentication system',
-          error: authError?.message,
+      // Generate UUID for user
+      const userId = randomUUID();
+
+      // Create user in Supabase Auth (for migration compatibility - can be removed later)
+      // This allows existing integrations to continue working during migration
+      let authUserId = userId;
+      try {
+        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
         });
+
+        if (!authError && authData?.user) {
+          authUserId = authData.user.id;
+        }
+        // If Supabase Auth creation fails, continue with our own UUID
+      } catch (error) {
+        console.warn('Supabase Auth user creation failed, using generated UUID:', error);
+        // Continue with generated UUID
       }
 
-      // Insert user into users table
+      // Insert user into users table with password_hash
       const { error: userError } = await supabase.from('users').insert({
-        id: authData.user.id,
+        id: authUserId,
         email,
         phone: phone || null,
         role: null, // Org users don't have role in users table
         organization_id: organizationId,
         timezone: 'Asia/Kolkata', // Default timezone
+        password_hash: passwordHash,
         created_at: getCurrentUTC().toISOString(),
         updated_at: getCurrentUTC().toISOString(),
       });
 
       if (userError) {
         // Rollback: delete auth user if profile creation fails
-        await supabase.auth.admin.deleteUser(authData.user.id);
+        if (authUserId !== userId) {
+          try {
+            await supabase.auth.admin.deleteUser(authUserId);
+          } catch (error) {
+            console.error('Failed to rollback auth user:', error);
+          }
+        }
         throw userError;
       }
 
@@ -182,8 +202,14 @@ router.post(
       const employeeRoleId = await getEmployeeRoleId(organizationId);
       if (!employeeRoleId) {
         // Rollback: delete auth user and user profile
-        await supabase.auth.admin.deleteUser(authData.user.id);
-        await supabase.from('users').delete().eq('id', authData.user.id);
+        if (authUserId !== userId) {
+          try {
+            await supabase.auth.admin.deleteUser(authUserId);
+          } catch (error) {
+            console.error('Failed to rollback auth user:', error);
+          }
+        }
+        await supabase.from('users').delete().eq('id', authUserId);
         return res.status(500).json({
           success: false,
           message: 'Failed to find EMPLOYEE role for organization',
@@ -192,7 +218,7 @@ router.post(
 
       // Assign EMPLOYEE role to user
       const { error: userRoleError } = await supabase.from('user_roles').insert({
-        user_id: authData.user.id,
+        user_id: authUserId,
         role_id: employeeRoleId,
         organization_id: organizationId,
         created_at: getCurrentUTC().toISOString(),
@@ -200,8 +226,14 @@ router.post(
 
       if (userRoleError) {
         // Rollback: delete auth user and user profile
-        await supabase.auth.admin.deleteUser(authData.user.id);
-        await supabase.from('users').delete().eq('id', authData.user.id);
+        if (authUserId !== userId) {
+          try {
+            await supabase.auth.admin.deleteUser(authUserId);
+          } catch (error) {
+            console.error('Failed to rollback auth user:', error);
+          }
+        }
+        await supabase.from('users').delete().eq('id', authUserId);
         throw userRoleError;
       }
 
@@ -221,7 +253,7 @@ router.post(
             )
           )
         `)
-        .eq('id', authData.user.id)
+        .eq('id', authUserId)
         .single();
 
       if (fetchError) {
@@ -230,7 +262,7 @@ router.post(
           success: true,
           message: 'User created successfully',
           user: {
-            id: authData.user.id,
+            id: authUserId,
             email,
             phone: phone || null,
             timezone: 'Asia/Kolkata',
@@ -370,36 +402,51 @@ router.post(
         const password = passwordOption === 'auto' ? generateRandomPassword() : sharedPassword;
 
         try {
-          // Create user in Supabase Auth
-          const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-            email,
-            password,
-            email_confirm: true,
-          });
+          // Hash password with bcrypt
+          const saltRounds = 10;
+          const passwordHash = await bcrypt.hash(password, saltRounds);
 
-          if (authError || !authData.user) {
-            results.failed.push({
+          // Generate UUID for user
+          const userId = randomUUID();
+
+          // Create user in Supabase Auth (for migration compatibility)
+          let authUserId = userId;
+          try {
+            const { data: authData, error: authError } = await supabase.auth.admin.createUser({
               email,
-              error: authError?.message || 'Failed to create user in authentication system',
+              password,
+              email_confirm: true,
             });
-            continue;
+
+            if (!authError && authData?.user) {
+              authUserId = authData.user.id;
+            }
+          } catch (error) {
+            console.warn('Supabase Auth user creation failed, using generated UUID:', error);
           }
 
-          // Insert user into users table
+          // Insert user into users table with password_hash
           const { error: userError } = await supabase.from('users').insert({
-            id: authData.user.id,
+            id: authUserId,
             email,
             phone: phone || null,
             role: null,
             organization_id: organizationId,
             timezone: 'Asia/Kolkata',
+            password_hash: passwordHash,
             created_at: getCurrentUTC().toISOString(),
             updated_at: getCurrentUTC().toISOString(),
           });
 
           if (userError) {
             // Rollback: delete auth user
-            await supabase.auth.admin.deleteUser(authData.user.id);
+            if (authUserId !== userId) {
+              try {
+                await supabase.auth.admin.deleteUser(authUserId);
+              } catch (error) {
+                console.error('Failed to rollback auth user:', error);
+              }
+            }
             results.failed.push({
               email,
               error: userError.message,
@@ -409,7 +456,7 @@ router.post(
 
           // Assign EMPLOYEE role
           const { error: userRoleError } = await supabase.from('user_roles').insert({
-            user_id: authData.user.id,
+            user_id: authUserId,
             role_id: employeeRoleId,
             organization_id: organizationId,
             created_at: getCurrentUTC().toISOString(),
@@ -417,8 +464,14 @@ router.post(
 
           if (userRoleError) {
             // Rollback: delete auth user and user profile
-            await supabase.auth.admin.deleteUser(authData.user.id);
-            await supabase.from('users').delete().eq('id', authData.user.id);
+            if (authUserId !== userId) {
+              try {
+                await supabase.auth.admin.deleteUser(authUserId);
+              } catch (error) {
+                console.error('Failed to rollback auth user:', error);
+              }
+            }
+            await supabase.from('users').delete().eq('id', authUserId);
             results.failed.push({
               email,
               error: userRoleError.message,

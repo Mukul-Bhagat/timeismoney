@@ -1,5 +1,6 @@
 import { useState, FormEvent } from 'react';
-import { supabase } from '../../config/supabase';
+import { useNavigate } from 'react-router-dom';
+import api from '../../config/api';
 import { colors } from '../../config/colors';
 import './Roles.css';
 
@@ -10,6 +11,7 @@ interface CreateRoleModalProps {
 }
 
 export function CreateRoleModal({ isOpen, onClose, onSuccess }: CreateRoleModalProps) {
+  const navigate = useNavigate();
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,32 +24,31 @@ export function CreateRoleModal({ isOpen, onClose, onSuccess }: CreateRoleModalP
     setLoading(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      // Check if token exists
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError('Session expired. Please login again.');
+        setTimeout(() => navigate('/signin'), 2000);
+        return;
       }
 
-      const response = await fetch('http://localhost:5000/api/roles', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ name }),
-      });
+      const response = await api.post('/api/roles', { name });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to create role');
+      if (!response.data.success) {
+        throw new Error(response.data.message || 'Failed to create role');
       }
 
       setName('');
       onSuccess();
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to create role');
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to create role';
+      setError(errorMessage);
+      
+      // Handle 401 - session expired
+      if (err.response?.status === 401) {
+        setTimeout(() => navigate('/signin'), 2000);
+      }
     } finally {
       setLoading(false);
     }
@@ -93,7 +94,7 @@ export function CreateRoleModal({ isOpen, onClose, onSuccess }: CreateRoleModalP
           </div>
 
           {error && (
-            <div className="error-message" style={{ color: colors.status.error, marginTop: '12px' }}>
+            <div className="error-message">
               {error}
             </div>
           )}

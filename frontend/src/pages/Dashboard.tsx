@@ -5,26 +5,27 @@ import { ManagerDashboard } from '../components/dashboard/ManagerDashboard';
 import { EmployeeDashboard } from '../components/dashboard/EmployeeDashboard';
 
 export function Dashboard() {
-  const { profile } = useAuth();
+  const { user, loading } = useAuth();
 
-  if (!profile) {
+  if (loading) {
     return <div>Loading...</div>;
   }
 
-  // Render role-specific dashboard
-  // Check roles array for org users, or role for SUPER_ADMIN
-  const userRoles = profile.role === 'SUPER_ADMIN' ? ['SUPER_ADMIN'] : profile.roles;
-  
-  if (userRoles.includes('SUPER_ADMIN')) {
+  if (!user) {
+    return <div>Please sign in</div>;
+  }
+
+  // Render role-specific dashboard based on user.role
+  if (user.role === 'SUPER_ADMIN') {
     return <SuperAdminDashboard />;
-  } else if (userRoles.includes('ADMIN')) {
+  } else if (user.role === 'ADMIN') {
     return <AdminDashboard />;
-  } else if (userRoles.includes('MANAGER')) {
+  } else if (user.role === 'MANAGER') {
     return <ManagerDashboard />;
-  } else if (userRoles.includes('EMPLOYEE')) {
+  } else if (user.role === 'EMPLOYEE') {
     return <EmployeeDashboard />;
   } else {
-    return <div>Unknown role</div>;
+    return <div>Unknown role: {user.role}</div>;
   }
 }
 

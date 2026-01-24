@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../config/supabase';
+import { useNavigate } from 'react-router-dom';
+import api from '../../config/api';
 import { colors } from '../../config/colors';
 import { RoleUserList } from './RoleUserList';
 import './Roles.css';
@@ -36,6 +37,7 @@ export function RoleDetailsModal({
   onClose,
   onUpdate,
 }: RoleDetailsModalProps) {
+  const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [availableUsers, setAvailableUsers] = useState<OrganizationUser[]>([]);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
@@ -53,29 +55,34 @@ export function RoleDetailsModal({
   const fetchUsers = async () => {
     if (!role) return;
 
+    setError(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      // Check if token exists
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError('Session expired. Please login again.');
+        setTimeout(() => navigate('/signin'), 2000);
+        return;
       }
 
-      const response = await fetch(`http://localhost:5000/api/roles/${role.id}/users`, {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
+      const response = await api.get(`/api/roles/${role.id}/users`);
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch users');
+      if (response.data.success) {
+        setUsers(response.data.users || []);
+      } else {
+        throw new Error(response.data.message || 'Failed to fetch users');
       }
-
-      setUsers(data.users || []);
     } catch (err: any) {
       console.error('Error fetching users:', err);
-      setError(err.message || 'Failed to fetch users');
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to fetch users';
+      
+      // Check if it's an auth error
+      if (err.response?.status === 401) {
+        setError('Session expired. Redirecting to login...');
+        setTimeout(() => navigate('/signin'), 2000);
+      } else {
+        setError(errorMessage);
+      }
     }
   };
 
@@ -83,50 +90,29 @@ export function RoleDetailsModal({
     if (!role) return;
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      // Check if token exists
+      const token = localStorage.getItem('token');
+      if (!token) {
+        return;
       }
 
-      // Get current user's organization
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data: profile } = await supabase
-        .from('users')
-        .select('organization_id')
-        .eq('id', user.id)
-        .single();
-
-      if (!profile?.organization_id) return;
-
-      // Get all users in organization
-      const { data: orgUsers, error } = await supabase
-        .from('users')
-        .select('id, email')
-        .eq('organization_id', profile.organization_id);
-
-      if (error) throw error;
+      // Get all users from the organization
+      const usersResponse = await api.get('/api/users');
+      const allUsers = usersResponse.data.users || [];
 
       // Get users already in this role
-      const response = await fetch(`http://localhost:5000/api/roles/${role.id}/users`, {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const roleData = await response.json();
-      const assignedUserIds = (roleData.users || []).map((u: User) => u.id);
+      const roleUsersResponse = await api.get(`/api/roles/${role.id}/users`);
+      const assignedUserIds = (roleUsersResponse.data.users || []).map((u: User) => u.id);
 
       // Filter out users already assigned
-      const available = (orgUsers || []).filter(
-        (u) => !assignedUserIds.includes(u.id)
+      const available = allUsers.filter(
+        (u: OrganizationUser) => !assignedUserIds.includes(u.id)
       );
 
-      setAvailableUsers(available || []);
+      setAvailableUsers(available);
     } catch (err: any) {
       console.error('Error fetching available users:', err);
+      // Don't show error for this - it's not critical
     }
   };
 
@@ -137,26 +123,17 @@ export function RoleDetailsModal({
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError('Session expired. Please login again.');
+        setTimeout(() => navigate('/signin'), 2000);
+        return;
       }
 
-      const response = await fetch(
-        `http://localhost:5000/api/roles/${role.id}/users/${userId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        }
-      );
+      const response = await api.delete(`/api/roles/${role.id}/users/${userId}`);
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to remove user');
+      if (!response.data.success) {
+        throw new Error(response.data.message || 'Failed to remove user');
       }
 
       await fetchUsers();
@@ -176,25 +153,19 @@ export function RoleDetailsModal({
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError('Session expired. Please login again.');
+        setTimeout(() => navigate('/signin'), 2000);
+        return;
       }
 
-      const response = await fetch(`http://localhost:5000/api/roles/${role.id}/users`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ user_ids: selectedUserIds }),
+      const response = await api.post(`/api/roles/${role.id}/users`, {
+        user_ids: selectedUserIds,
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to add users');
+      if (!response.data.success) {
+        throw new Error(response.data.message || 'Failed to add users');
       }
 
       setSelectedUserIds([]);
@@ -202,7 +173,12 @@ export function RoleDetailsModal({
       await fetchAvailableUsers();
       onUpdate();
     } catch (err: any) {
-      setError(err.message || 'Failed to add users');
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to add users';
+      setError(errorMessage);
+      
+      if (err.response?.status === 401) {
+        setTimeout(() => navigate('/signin'), 2000);
+      }
     } finally {
       setLoading(false);
     }
@@ -224,16 +200,7 @@ export function RoleDetailsModal({
         </div>
 
         {error && (
-          <div
-            className="error-message"
-            style={{
-              padding: '12px',
-              margin: '16px',
-              background: colors.status.error + '20',
-              color: colors.status.error,
-              borderRadius: '4px',
-            }}
-          >
+          <div className="error-message">
             {error}
           </div>
         )}

@@ -5,14 +5,14 @@ import { colors } from '../config/colors';
 import './Sidebar.css';
 
 export function Sidebar() {
-  const { profile, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const location = useLocation();
 
-  if (!profile) {
+  if (!user) {
     return null;
   }
 
-  const allowedPages = getPagesForRole(profile.role, profile.roles);
+  const allowedPages = getPagesForRole(user.role, [user.role]);
 
   const handleSignOut = async () => {
     await signOut();

@@ -1,5 +1,5 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { supabase } from '../../config/supabase';
+import api from '../../config/api';
 import { colors } from '../../config/colors';
 import type { Role } from '../../types';
 import './Projects.css';
@@ -54,27 +54,15 @@ export function CreateProjectModal({ isOpen, onClose, onSuccess }: CreateProject
 
   const fetchRoles = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      const response = await api.get('/api/roles');
+
+      if (response.data.success) {
+        setRoles(response.data.roles || []);
+      } else {
+        throw new Error(response.data.message || 'Failed to fetch roles');
       }
-
-      const response = await fetch('http://localhost:5000/api/roles', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch roles');
-      }
-
-      setRoles(data.roles || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch roles');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch roles');
     }
   };
 
@@ -84,27 +72,15 @@ export function CreateProjectModal({ isOpen, onClose, onSuccess }: CreateProject
     setLoadingUsers(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
+      const response = await api.get(`/api/roles/${roleId}/users`);
+
+      if (response.data.success) {
+        setUsersForRole(response.data.users || []);
+      } else {
+        throw new Error(response.data.message || 'Failed to fetch users');
       }
-
-      const response = await fetch(`http://localhost:5000/api/roles/${roleId}/users`, {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch users');
-      }
-
-      setUsersForRole(data.users || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch users');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch users');
     } finally {
       setLoadingUsers(false);
     }
@@ -171,39 +147,30 @@ export function CreateProjectModal({ isOpen, onClose, onSuccess }: CreateProject
     setLoading(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
       // Format members for API
       const members = selectedMembers.map(m => ({
         user_id: m.user_id,
         role_id: m.role_id,
       }));
 
-      const response = await fetch('http://localhost:5000/api/projects', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          title: title.trim(),
-          description: description.trim() || null,
-          start_date: startDate,
-          end_date: endDate,
-          status,
-          members,
-        }),
+      console.log('Creating project with members:', members);
+      console.log('Selected members:', selectedMembers);
+
+      const response = await api.post('/api/projects', {
+        title: title.trim(),
+        description: description.trim() || null,
+        start_date: startDate,
+        end_date: endDate,
+        status,
+        members,
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to create project');
+      if (!response.data.success) {
+        console.error('Project creation failed:', response.data);
+        throw new Error(response.data.message || response.data.error || 'Failed to create project');
       }
+
+      console.log('Project created successfully:', response.data);
 
       // Reset form
       setTitle('');
@@ -219,7 +186,7 @@ export function CreateProjectModal({ isOpen, onClose, onSuccess }: CreateProject
       onSuccess();
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to create project');
+      setError(err.response?.data?.message || err.message || 'Failed to create project');
     } finally {
       setLoading(false);
     }
@@ -406,36 +373,98 @@ export function CreateProjectModal({ isOpen, onClose, onSuccess }: CreateProject
                   ) : (
                     <>
                       <div className="member-select-container">
-                        <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                          Select Users (multiple selection)
+                        <label style={{ display: 'block', marginBottom: '12px', fontWeight: '500' }}>
+                          Select Users ({selectedUserIds.length} selected)
                         </label>
-                        <select
-                          multiple
-                          value={selectedUserIds}
-                          onChange={(e) => {
-                            const values = Array.from(e.target.selectedOptions, option => option.value);
-                            setSelectedUserIds(values);
-                          }}
-                          disabled={loading}
-                          className="member-select"
+                        <div 
                           style={{
-                            width: '100%',
-                            padding: '8px 12px',
                             border: `1px solid ${colors.border}`,
-                            borderRadius: '4px',
-                            fontSize: '14px',
+                            borderRadius: '8px',
+                            padding: '12px',
                             background: colors.white,
-                            minHeight: '120px',
+                            maxHeight: '200px',
+                            overflowY: 'auto',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px',
                           }}
                         >
-                          {usersForRole.map((user) => (
-                            <option key={user.id} value={user.id}>
-                              {user.email}
-                            </option>
-                          ))}
-                        </select>
-                        <div style={{ fontSize: '12px', color: colors.text.secondary, marginTop: '4px' }}>
-                          Hold Ctrl/Cmd to select multiple users
+                          {usersForRole.map((user) => {
+                            const selectedRole = roles.find(r => r.id === currentRoleId);
+                            const isSelected = selectedUserIds.includes(user.id);
+                            return (
+                              <label
+                                key={user.id}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '12px',
+                                  padding: '10px',
+                                  borderRadius: '6px',
+                                  cursor: 'pointer',
+                                  backgroundColor: isSelected ? '#eff6ff' : 'transparent',
+                                  border: `1px solid ${isSelected ? '#2563eb' : '#e2e8f0'}`,
+                                  transition: 'all 0.2s',
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (!isSelected) {
+                                    e.currentTarget.style.backgroundColor = '#f8fafc';
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (!isSelected) {
+                                    e.currentTarget.style.backgroundColor = 'transparent';
+                                  }
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedUserIds([...selectedUserIds, user.id]);
+                                    } else {
+                                      setSelectedUserIds(selectedUserIds.filter(id => id !== user.id));
+                                    }
+                                  }}
+                                  disabled={loading}
+                                  style={{
+                                    width: '18px',
+                                    height: '18px',
+                                    cursor: 'pointer',
+                                  }}
+                                />
+                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <span style={{ 
+                                    fontSize: '14px', 
+                                    fontWeight: '500', 
+                                    color: colors.text.primary 
+                                  }}>
+                                    {user.email}
+                                  </span>
+                                  <span style={{ 
+                                    fontSize: '12px', 
+                                    color: colors.text.secondary,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                  }}>
+                                    <span style={{
+                                      display: 'inline-block',
+                                      padding: '2px 6px',
+                                      borderRadius: '4px',
+                                      background: '#dbeafe',
+                                      color: '#1e40af',
+                                      fontSize: '11px',
+                                      fontWeight: '500',
+                                    }}>
+                                      {selectedRole?.name || 'N/A'}
+                                    </span>
+                                  </span>
+                                </div>
+                              </label>
+                            );
+                          })}
                         </div>
                       </div>
 
@@ -444,17 +473,32 @@ export function CreateProjectModal({ isOpen, onClose, onSuccess }: CreateProject
                         onClick={handleAddMembers}
                         disabled={loading || selectedUserIds.length === 0}
                         style={{
-                          padding: '8px 16px',
+                          padding: '10px 20px',
                           border: 'none',
-                          borderRadius: '4px',
+                          borderRadius: '6px',
                           background: colors.primary.main,
                           color: colors.white,
                           cursor: loading || selectedUserIds.length === 0 ? 'not-allowed' : 'pointer',
                           fontSize: '14px',
+                          fontWeight: '500',
                           opacity: loading || selectedUserIds.length === 0 ? 0.5 : 1,
+                          transition: 'all 0.2s',
+                          width: '100%',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!loading && selectedUserIds.length > 0) {
+                            e.currentTarget.style.background = '#1d4ed8';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!loading && selectedUserIds.length > 0) {
+                            e.currentTarget.style.background = colors.primary.main;
+                          }
                         }}
                       >
-                        Add Selected Users
+                        {selectedUserIds.length > 0 
+                          ? `Add ${selectedUserIds.length} Selected User${selectedUserIds.length > 1 ? 's' : ''}`
+                          : 'Add Selected Users'}
                       </button>
                     </>
                   )}
@@ -464,17 +508,93 @@ export function CreateProjectModal({ isOpen, onClose, onSuccess }: CreateProject
 
             {/* Selected Members Preview */}
             {selectedMembers.length > 0 && (
-              <div className="members-preview">
-                <div className="members-preview-title">Selected Members ({selectedMembers.length})</div>
-                <div className="members-preview-list">
+              <div className="members-preview" style={{ marginTop: '24px', paddingTop: '24px', borderTop: `1px solid ${colors.border}` }}>
+                <div className="members-preview-title" style={{ 
+                  fontSize: '16px', 
+                  fontWeight: '600', 
+                  color: colors.text.primary,
+                  marginBottom: '16px',
+                }}>
+                  Assigned Members ({selectedMembers.length})
+                </div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                  gap: '12px',
+                }}>
                   {selectedMembers.map((member) => (
-                    <div key={`${member.user_id}-${member.role_id}`} className="selected-member-tag">
-                      <span>{member.user_email} - {member.role_name}</span>
+                    <div 
+                      key={`${member.user_id}-${member.role_id}`}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '12px 16px',
+                        background: colors.white,
+                        border: `1px solid ${colors.border}`,
+                        borderRadius: '8px',
+                        transition: 'all 0.2s',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.borderColor = '#2563eb';
+                        e.currentTarget.style.boxShadow = '0 2px 4px rgba(37, 99, 235, 0.1)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = colors.border;
+                        e.currentTarget.style.boxShadow = 'none';
+                      }}
+                    >
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span style={{ 
+                          fontSize: '14px', 
+                          fontWeight: '500', 
+                          color: colors.text.primary 
+                        }}>
+                          {member.user_email}
+                        </span>
+                        <span style={{
+                          display: 'inline-block',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          background: '#dbeafe',
+                          color: '#1e40af',
+                          fontSize: '12px',
+                          fontWeight: '500',
+                          width: 'fit-content',
+                        }}>
+                          {member.role_name}
+                        </span>
+                      </div>
                       <button
                         type="button"
                         onClick={() => handleRemoveMember(member.user_id)}
-                        className="remove-member-btn"
                         disabled={loading}
+                        style={{
+                          background: '#fee2e2',
+                          border: 'none',
+                          borderRadius: '4px',
+                          width: '24px',
+                          height: '24px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: loading ? 'not-allowed' : 'pointer',
+                          color: '#dc2626',
+                          fontSize: '16px',
+                          lineHeight: '1',
+                          transition: 'all 0.2s',
+                          flexShrink: 0,
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!loading) {
+                            e.currentTarget.style.background = '#fecaca';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!loading) {
+                            e.currentTarget.style.background = '#fee2e2';
+                          }
+                        }}
                       >
                         ×
                       </button>

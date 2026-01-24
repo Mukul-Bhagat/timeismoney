@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../config/supabase';
+import api from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import type { Project, Timesheet, TimesheetEntry, ProjectWithTimesheet } from '../types';
 import { formatDateIST } from '../utils/timezone';
@@ -20,7 +20,7 @@ interface ProjectTimesheetData {
 }
 
 export function Timesheet() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [projects, setProjects] = useState<ProjectTimesheetData[]>([]);
   const [historyTimesheets, setHistoryTimesheets] = useState<Timesheet[]>([]);
@@ -52,48 +52,20 @@ export function Timesheet() {
     } else {
       fetchHistory();
     }
-  }, [activeTab, profile]);
+  }, [activeTab, user]);
 
   const fetchActiveTimesheets = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
       // Fetch projects where user is a member
-      const projectsResponse = await fetch('http://localhost:5000/api/timesheets/projects', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const projectsData = await projectsResponse.json();
-
-      if (!projectsResponse.ok) {
-        throw new Error(projectsData.message || 'Failed to fetch projects');
-      }
-
-      const projectsList: Project[] = projectsData.projects || [];
+      const projectsResponse = await api.get('/api/timesheets/projects');
+      const projectsList: Project[] = projectsResponse.data.projects || [];
 
       // Fetch all timesheets for user
-      const timesheetsResponse = await fetch('http://localhost:5000/api/timesheets', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const timesheetsData = await timesheetsResponse.json();
-
-      if (!timesheetsResponse.ok) {
-        throw new Error(timesheetsData.message || 'Failed to fetch timesheets');
-      }
-
-      const timesheets: Timesheet[] = timesheetsData.timesheets || [];
+      const timesheetsResponse = await api.get('/api/timesheets');
+      const timesheets: Timesheet[] = timesheetsResponse.data.timesheets || [];
 
       // Combine projects with their timesheets
       const projectsWithTimesheets: ProjectTimesheetData[] = projectsList.map((project) => {
@@ -140,25 +112,8 @@ export function Timesheet() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch('http://localhost:5000/api/timesheets/history', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch history');
-      }
-
-      setHistoryTimesheets(data.timesheets || []);
+      const response = await api.get('/api/timesheets/history');
+      setHistoryTimesheets(response.data.timesheets || []);
     } catch (err: any) {
       setError(err.message || 'Failed to load history');
     } finally {
@@ -249,41 +204,22 @@ export function Timesheet() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
       // Convert entries map to array
       const entries: DateEntry[] = projectData.dates.map((date) => ({
         date,
         hours: projectData.entries.get(date) || 0,
       }));
 
-      const response = await fetch('http://localhost:5000/api/timesheets', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          project_id: projectData.project.id,
-          entries,
-        }),
+      const response = await api.post('/api/timesheets', {
+        project_id: projectData.project.id,
+        entries,
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to save timesheet');
-      }
 
       // Update timesheet in state
       setProjects((prev) =>
         prev.map((p) => {
           if (p.project.id === projectData.project.id) {
-            return { ...p, timesheet: data.timesheet };
+            return { ...p, timesheet: response.data.timesheet };
           }
           return p;
         })
@@ -312,32 +248,12 @@ export function Timesheet() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch(
-        `http://localhost:5000/api/timesheets/${projectData.timesheet.id}/submit`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to submit timesheet');
-      }
+      await api.post(`/api/timesheets/${projectData.timesheet.id}/submit`);
 
       // Refresh timesheets
       await fetchActiveTimesheets();
     } catch (err: any) {
-      setError(err.message || 'Failed to submit timesheet');
+      setError(err.response?.data?.message || err.message || 'Failed to submit timesheet');
     } finally {
       setSubmitting(null);
     }
@@ -346,28 +262,13 @@ export function Timesheet() {
   // Export timesheet
   const handleExport = async (timesheet: Timesheet) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch(
-        `http://localhost:5000/api/timesheets/${timesheet.id}/export`,
-        {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        }
+      const response = await api.get(
+        `/api/timesheets/${timesheet.id}/export`,
+        { responseType: 'blob' }
       );
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || 'Failed to export timesheet');
-      }
-
       // Download file
-      const blob = await response.blob();
+      const blob = response.data;
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -377,7 +278,7 @@ export function Timesheet() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (err: any) {
-      setError(err.message || 'Failed to export timesheet');
+      setError(err.response?.data?.message || err.message || 'Failed to export timesheet');
     }
   };
 

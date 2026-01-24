@@ -55,20 +55,35 @@ export function ProjectCard({ project, onClick }: ProjectCardProps) {
       </div>
 
       <div className="project-card-footer">
-        <div
-          className={`project-status-badge ${
-            project.status === 'active' ? 'project-status-active' : 'project-status-completed'
-          }`}
-          style={{
-            padding: '4px 8px',
-            borderRadius: '4px',
-            fontSize: '12px',
-            fontWeight: '500',
-            background: project.status === 'active' ? '#d1fae5' : '#e0e7ff',
-            color: project.status === 'active' ? '#065f46' : '#3730a3',
-          }}
-        >
-          {project.status === 'active' ? 'Active' : 'Completed'}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <div
+            className={`project-status-badge ${
+              project.status === 'active' ? 'project-status-active' : 'project-status-completed'
+            }`}
+            style={{
+              padding: '4px 8px',
+              borderRadius: '4px',
+              fontSize: '12px',
+              fontWeight: '500',
+              background: project.status === 'active' ? '#d1fae5' : '#e0e7ff',
+              color: project.status === 'active' ? '#065f46' : '#3730a3',
+            }}
+          >
+            {project.status === 'active' ? 'Active' : 'Completed'}
+          </div>
+          <div
+            style={{
+              padding: '4px 8px',
+              borderRadius: '4px',
+              fontSize: '12px',
+              fontWeight: '500',
+              background: project.setup_status === 'setup_done' ? '#d1fae5' : '#fef3c7',
+              color: project.setup_status === 'setup_done' ? '#065f46' : '#92400e',
+            }}
+            title={project.setup_status === 'setup_done' ? 'Cost planning is complete' : 'Cost planning pending'}
+          >
+            {project.setup_status === 'setup_done' ? '🟢 Ready' : '🟡 Draft'}
+          </div>
         </div>
         <div
           style={{

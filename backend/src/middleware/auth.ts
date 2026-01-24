@@ -1,14 +1,30 @@
 import { Request, Response, NextFunction } from 'express';
-import { supabase } from '../config/supabase';
+import jwt from 'jsonwebtoken';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 export interface AuthRequest extends Request {
   user?: {
     id: string;
     email: string;
     role: string | null; // Only for SUPER_ADMIN, null for org users
-    roles: string[]; // Organization roles from user_roles table
+    roles: string[]; // Organization roles from user_roles table (for backward compatibility)
     organization_id: string | null;
+    userId?: string; // JWT payload userId
+    organizationId?: string | null; // JWT payload organizationId
+    timezone?: string; // JWT payload timezone
   };
+}
+
+interface JWTPayload {
+  userId: string;
+  email: string;
+  role: string;
+  organizationId: string | null;
+  timezone: string;
+  iat?: number;
+  exp?: number;
 }
 
 /**
@@ -31,64 +47,48 @@ export async function verifyAuth(
 
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
 
-    // Verify the token with Supabase
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser(token);
-
-    if (error || !user) {
-      return res.status(401).json({
+    // Verify JWT token
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      console.error('JWT_SECRET is not set in environment variables');
+      return res.status(500).json({
         success: false,
-        message: 'Invalid or expired token',
+        message: 'Server configuration error',
       });
     }
 
-    // Fetch user profile from users table
-    const { data: profile, error: profileError } = await supabase
-      .from('users')
-      .select('id, email, role, organization_id')
-      .eq('id', user.id)
-      .single();
-
-    if (profileError || !profile) {
-      return res.status(401).json({
-        success: false,
-        message: 'User profile not found',
-      });
-    }
-
-    // For SUPER_ADMIN, use role from users table
-    // For org users, fetch roles from user_roles table
-    let roles: string[] = [];
-    if (profile.role === 'SUPER_ADMIN') {
-      roles = ['SUPER_ADMIN'];
-    } else if (profile.organization_id) {
-      // Fetch organization roles from user_roles table
-      const { data: userRoles, error: userRolesError } = await supabase
-        .from('user_roles')
-        .select(`
-          roles:role_id (
-            name
-          )
-        `)
-        .eq('user_id', profile.id)
-        .eq('organization_id', profile.organization_id);
-
-      if (!userRolesError && userRoles) {
-        roles = (userRoles as any[])
-          .map((ur: any) => ur.roles?.name)
-          .filter((name): name is string => !!name);
+    let decoded: JWTPayload;
+    try {
+      decoded = jwt.verify(token, jwtSecret) as JWTPayload;
+    } catch (error: any) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({
+          success: false,
+          message: 'Token has expired',
+        });
+      } else if (error.name === 'JsonWebTokenError') {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid token',
+        });
       }
+      return res.status(401).json({
+        success: false,
+        message: 'Token verification failed',
+      });
     }
 
-    // Attach user info to request
+    // Attach user info to request from JWT payload
+    // Keep backward compatibility with existing interface
     req.user = {
-      id: profile.id,
-      email: profile.email,
-      role: profile.role, // Keep for backward compatibility, null for org users
-      roles, // Array of role names
-      organization_id: profile.organization_id,
+      id: decoded.userId,
+      userId: decoded.userId,
+      email: decoded.email,
+      role: decoded.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : null, // Keep for backward compatibility
+      roles: [decoded.role], // Array for backward compatibility
+      organization_id: decoded.organizationId,
+      organizationId: decoded.organizationId,
+      timezone: decoded.timezone,
     };
 
     next();
@@ -103,7 +103,7 @@ export async function verifyAuth(
 
 /**
  * Middleware to check if user has required role
- * Works with both SUPER_ADMIN (from users.role) and org roles (from user_roles)
+ * Works with JWT role from token payload
  */
 export function requireRole(...allowedRoles: string[]) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -115,9 +115,9 @@ export function requireRole(...allowedRoles: string[]) {
     }
 
     // Check if user has any of the allowed roles
-    const hasRole = 
-      (req.user.role && allowedRoles.includes(req.user.role)) ||
-      req.user.roles.some(role => allowedRoles.includes(role));
+    // JWT payload role is the source of truth
+    const userRole = req.user.role || (req.user.roles && req.user.roles[0]) || null;
+    const hasRole = userRole && allowedRoles.includes(userRole);
 
     if (!hasRole) {
       return res.status(403).json({

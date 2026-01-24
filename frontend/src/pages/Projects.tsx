@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../config/supabase';
+import api from '../config/api';
 import { colors } from '../config/colors';
 import { ProjectCard } from '../components/projects/ProjectCard';
 import { CreateProjectModal } from '../components/projects/CreateProjectModal';
@@ -10,7 +10,7 @@ import './Page.css';
 import '../components/projects/Projects.css';
 
 export function Projects() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,27 +27,10 @@ export function Projects() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch('http://localhost:5000/api/projects', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch projects');
-      }
-
-      setProjects(data.projects || []);
+      const response = await api.get('/api/projects');
+      setProjects(response.data.projects || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch projects');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch projects');
     } finally {
       setLoading(false);
     }
@@ -55,28 +38,11 @@ export function Projects() {
 
   const handleProjectClick = async (project: Project) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch(`http://localhost:5000/api/projects/${project.id}`, {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch project details');
-      }
-
-      setSelectedProject(data.project);
+      const response = await api.get(`/api/projects/${project.id}`);
+      setSelectedProject(response.data.project);
       setIsDetailsModalOpen(true);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch project details');
+      setError(err.response?.data?.message || err.message || 'Failed to fetch project details');
     }
   };
 
@@ -87,7 +53,7 @@ export function Projects() {
 
   // Check if user has ADMIN or SUPER_ADMIN role
   const canManageProjects =
-    profile?.role === 'SUPER_ADMIN' || profile?.roles.includes('ADMIN');
+    user?.role === 'SUPER_ADMIN' || user?.role === 'ADMIN';
 
   if (!canManageProjects) {
     return (

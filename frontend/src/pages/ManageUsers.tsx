@@ -1,14 +1,14 @@
 import { useState, useEffect, FormEvent, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../config/supabase';
+import api from '../config/api';
 import { colors } from '../config/colors';
 import type { User } from '../types';
 import './Page.css';
 import './ManageUsers.css';
 
 export function ManageUsers() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,10 +37,10 @@ export function ManageUsers() {
 
   useEffect(() => {
     // Check access - only SUPER_ADMIN and ADMIN can access
-    if (profile) {
+    if (user) {
       const hasAccess = 
-        profile.role === 'SUPER_ADMIN' || 
-        profile.roles.includes('ADMIN');
+        user.role === 'SUPER_ADMIN' || 
+        user.role === 'ADMIN';
       
       if (!hasAccess) {
         navigate('/dashboard');
@@ -49,34 +49,17 @@ export function ManageUsers() {
     }
 
     fetchUsers();
-  }, [profile, navigate]);
+  }, [user, navigate]);
 
   const fetchUsers = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch('http://localhost:5000/api/users', {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to fetch users');
-      }
-
-      setUsers(data.users || []);
+      const response = await api.get('/api/users');
+      setUsers(response.data.users || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to load users');
+      setError(err.response?.data?.message || err.message || 'Failed to load users');
     } finally {
       setLoading(false);
     }
@@ -88,30 +71,11 @@ export function ManageUsers() {
     setCreating(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch('http://localhost:5000/api/users', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          email,
-          phone: phone || undefined,
-          password,
-        }),
+      const response = await api.post('/api/users', {
+        email,
+        phone: phone || undefined,
+        password,
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to create user');
-      }
 
       // Reset form
       setEmail('');
@@ -121,7 +85,7 @@ export function ManageUsers() {
       // Refresh users list
       await fetchUsers();
     } catch (err: any) {
-      setCreateError(err.message || 'Failed to create user');
+      setCreateError(err.response?.data?.message || err.message || 'Failed to create user');
     } finally {
       setCreating(false);
     }
@@ -155,32 +119,13 @@ export function ManageUsers() {
       // Read CSV file
       const text = await csvFile.text();
       
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session?.access_token) {
-        throw new Error('No active session');
-      }
-
-      const response = await fetch('http://localhost:5000/api/users/bulk', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          csvData: text,
-          passwordOption,
-          sharedPassword: passwordOption === 'shared' ? sharedPassword : undefined,
-        }),
+      const response = await api.post('/api/users/bulk', {
+        csvData: text,
+        passwordOption,
+        sharedPassword: passwordOption === 'shared' ? sharedPassword : undefined,
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Failed to import users');
-      }
-
-      setImportSummary(data.summary);
+      setImportSummary(response.data.summary);
       
       // Reset file input
       if (fileInputRef.current) {
@@ -192,7 +137,7 @@ export function ManageUsers() {
       // Refresh users list
       await fetchUsers();
     } catch (err: any) {
-      setImportError(err.message || 'Failed to import users');
+      setImportError(err.response?.data?.message || err.message || 'Failed to import users');
     } finally {
       setImporting(false);
     }

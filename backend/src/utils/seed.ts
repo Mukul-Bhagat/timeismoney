@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase';
 import { getCurrentUTC } from './timezone';
+import bcrypt from 'bcrypt';
 
 /**
  * Seed script to create the hardcoded super admin user
@@ -13,48 +14,87 @@ export async function seedSuperAdmin() {
     const password = 'attend#321';
 
     // Check if user already exists
-    const { data: existingUsers } = await supabase
+    const { data: existingUser } = await supabase
       .from('users')
-      .select('id, email')
-      .eq('email', email);
+      .select('id, email, password_hash')
+      .eq('email', email)
+      .single();
 
-    if (existingUsers && existingUsers.length > 0) {
-      console.log('Super admin user already exists');
-      return { success: true, message: 'Super admin already exists' };
+    if (existingUser) {
+      // User exists - check if password_hash is set
+      if (!existingUser.password_hash) {
+        console.log('User exists but password_hash is not set. Setting password...');
+        const saltRounds = 10;
+        const passwordHash = await bcrypt.hash(password, saltRounds);
+        
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({ password_hash: passwordHash })
+          .eq('id', existingUser.id);
+
+        if (updateError) {
+          throw updateError;
+        }
+        console.log('✅ Password set for existing user');
+      } else {
+        console.log('Super admin user already exists with password');
+      }
+      return { success: true, message: 'Super admin ready' };
     }
 
-    // Create user in Supabase Auth
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true, // Auto-confirm email
-    });
+    // Hash password for new user
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
 
-    if (authError || !authData.user) {
-      throw authError || new Error('Failed to create super admin in auth');
+    // Generate UUID for user
+    const { randomUUID } = require('crypto');
+    const userId = randomUUID();
+
+    // Create user in Supabase Auth (for migration compatibility)
+    let authUserId = userId;
+    try {
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+      });
+
+      if (!authError && authData?.user) {
+        authUserId = authData.user.id;
+      }
+    } catch (error) {
+      console.warn('Supabase Auth user creation failed, using generated UUID:', error);
     }
 
-    // Create user profile in users table
+    // Create user profile in users table with password_hash
     const { error: userError } = await supabase.from('users').insert({
-      id: authData.user.id,
+      id: authUserId,
       email,
       role: 'SUPER_ADMIN',
       organization_id: null, // Super admin doesn't belong to any organization
+      password_hash: passwordHash,
+      timezone: 'Asia/Kolkata',
       created_at: getCurrentUTC().toISOString(),
       updated_at: getCurrentUTC().toISOString(),
     });
 
     if (userError) {
       // Rollback: delete auth user if profile creation fails
-      await supabase.auth.admin.deleteUser(authData.user.id);
+      if (authUserId !== userId) {
+        try {
+          await supabase.auth.admin.deleteUser(authUserId);
+        } catch (error) {
+          console.error('Failed to rollback auth user:', error);
+        }
+      }
       throw userError;
     }
 
-    console.log('Super admin user created successfully');
+    console.log('✅ Super admin user created successfully');
     return {
       success: true,
       message: 'Super admin created successfully',
-      userId: authData.user.id,
+      userId: authUserId,
     };
   } catch (error: any) {
     console.error('Error seeding super admin:', error);

@@ -167,7 +167,7 @@ router.get('/projects', verifyAuth, requireRole('ADMIN', 'MANAGER'), async (req:
 /**
  * Helper function to fetch project approval data
  */
-async function fetchProjectApprovalData(projectId: string, userId: string): Promise<{ project: any; dateRange: string[]; approvalRows: any[] } | null> {
+async function fetchProjectApprovalData(projectId: string, userId: string): Promise<{ project: any; dateRange: string[]; approvalRows: any[]; submissionStatus: any } | null> {
   // Get project
   const { data: project, error: projectError } = await supabase
     .from('projects')
@@ -253,12 +253,27 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
 
   // Build approval data rows
   const approvalRows: any[] = [];
+  let submittedCount = 0;
+  let pendingCount = 0;
+  const pendingUsers: string[] = [];
 
   for (const member of members || []) {
     const user = (member as any).users;
     const role = (member as any).roles;
     const timesheet = (timesheets || []).find((t: any) => t.user_id === member.user_id);
     const costing = (costingData || []).find((c: any) => c.user_id === member.user_id);
+
+    // Track submission status for approval
+    // SUBMITTED: ready for approval
+    // APPROVED: already approved, counts as submitted (doesn't need to submit again)
+    // DRAFT or no timesheet: needs to be submitted (pending)
+    if (timesheet?.status === 'SUBMITTED' || timesheet?.status === 'APPROVED') {
+      submittedCount++;
+    } else {
+      // No timesheet or status is DRAFT - needs to be submitted
+      pendingCount++;
+      pendingUsers.push(user?.email || 'Unknown');
+    }
 
     // Map day-wise hours
     const dayHours: { [date: string]: number } = {};
@@ -292,10 +307,20 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
     });
   }
 
+  const totalMembers = (members || []).length;
+  const allSubmitted = submittedCount === totalMembers && totalMembers > 0;
+
   return {
     project,
     dateRange,
     approvalRows,
+    submissionStatus: {
+      total_members: totalMembers,
+      submitted_count: submittedCount,
+      pending_count: pendingCount,
+      all_submitted: allSubmitted,
+      pending_users: pendingUsers,
+    },
   };
 }
 
@@ -336,6 +361,7 @@ router.get('/projects/:id', verifyAuth, requireRole('ADMIN', 'MANAGER'), async (
       },
       date_range: approvalData.dateRange,
       approval_rows: approvalData.approvalRows,
+      submission_status: approvalData.submissionStatus,
     });
   } catch (error: any) {
     res.status(500).json({
@@ -516,21 +542,75 @@ router.post('/projects/:id/approve', verifyAuth, requireRole('ADMIN', 'MANAGER')
       }
     }
 
-    // Get all SUBMITTED timesheets for this project
-    const { data: submittedTimesheets, error: timesheetsError } = await supabase
+    // Get all project members (all users assigned to this project)
+    const { data: projectMembers, error: membersError } = await supabase
+      .from('project_members')
+      .select('user_id')
+      .eq('project_id', id);
+
+    if (membersError) {
+      throw membersError;
+    }
+
+    if (!projectMembers || projectMembers.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No members assigned to this project',
+      });
+    }
+
+    const totalMembers = projectMembers.length;
+    const memberUserIds = projectMembers.map((pm: any) => pm.user_id);
+
+    // Get all timesheets for this project (SUBMITTED and APPROVED)
+    const { data: allTimesheets, error: timesheetsError } = await supabase
       .from('timesheets')
-      .select('id')
+      .select('id, user_id, status')
       .eq('project_id', id)
-      .eq('status', 'SUBMITTED');
+      .in('status', ['SUBMITTED', 'APPROVED']);
 
     if (timesheetsError) {
       throw timesheetsError;
     }
 
-    if (!submittedTimesheets || submittedTimesheets.length === 0) {
+    // Separate SUBMITTED (need approval) and APPROVED (already approved)
+    const submittedTimesheets = (allTimesheets || []).filter((t: any) => t.status === 'SUBMITTED');
+    const approvedTimesheets = (allTimesheets || []).filter((t: any) => t.status === 'APPROVED');
+    
+    // Users who have either SUBMITTED or APPROVED timesheets
+    const completedUserIds = (allTimesheets || []).map((t: any) => t.user_id);
+    const pendingUserIds = memberUserIds.filter((userId: string) => !completedUserIds.includes(userId));
+
+    // Check if ALL members have submitted (either SUBMITTED or APPROVED)
+    if (pendingUserIds.length > 0) {
+      // Get user emails for pending users
+      const { data: pendingUsers, error: usersError } = await supabase
+        .from('users')
+        .select('id, email')
+        .in('id', pendingUserIds);
+
+      const pendingEmails = pendingUsers?.map((u: any) => u.email) || [];
+
       return res.status(400).json({
         success: false,
-        message: 'No submitted timesheets found for this project',
+        message: `Cannot approve: Not all project members have submitted their timesheets. ${pendingUserIds.length} of ${totalMembers} member(s) still need to submit.`,
+        total_members: totalMembers,
+        submitted_count: submittedTimesheets.length,
+        approved_count: approvedTimesheets.length,
+        pending_count: pendingUserIds.length,
+        pending_users: pendingEmails,
+      });
+    }
+
+    // If no SUBMITTED timesheets to approve (all are already APPROVED)
+    if (submittedTimesheets.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'All timesheets for this project have already been approved.',
+        total_members: totalMembers,
+        submitted_count: 0,
+        approved_count: approvedTimesheets.length,
+        pending_count: 0,
       });
     }
 
