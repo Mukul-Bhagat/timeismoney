@@ -113,6 +113,8 @@ async function calculatePlannedHoursForUser(
   let plannedTotalHours = 0;
 
   try {
+    console.log(`[Planned Hours] Starting calculation for user ${userId}, project ${projectId}`);
+    
     // Check if project has project_setup (Type B projects)
     const { data: projectSetup, error: setupError } = await supabase
       .from('project_setups')
@@ -121,11 +123,11 @@ async function calculatePlannedHoursForUser(
       .single();
 
     if (setupError || !projectSetup) {
-      console.log(`[Planned Hours] No project setup found for project ${projectId}:`, setupError?.message);
+      console.log(`[Planned Hours] No project setup found for project ${projectId}:`, setupError?.message || 'No setup record');
       return { plannedDayHours, plannedTotalHours };
     }
 
-    console.log(`[Planned Hours] Found project setup ${projectSetup.id} for project ${projectId}`);
+    console.log(`[Planned Hours] ✓ Found project setup ${projectSetup.id} for project ${projectId}`);
 
     // Get allocation for this user
     const { data: allocation, error: allocError } = await supabase
@@ -136,11 +138,11 @@ async function calculatePlannedHoursForUser(
       .single();
 
     if (allocError || !allocation) {
-      console.log(`[Planned Hours] No allocation found for user ${userId} in project ${projectId}:`, allocError?.message);
+      console.log(`[Planned Hours] No allocation found for user ${userId} in project ${projectId}:`, allocError?.message || 'No allocation record');
       return { plannedDayHours, plannedTotalHours };
     }
 
-    console.log(`[Planned Hours] Found allocation ${allocation.id} for user ${userId}`);
+    console.log(`[Planned Hours] ✓ Found allocation ${allocation.id} for user ${userId}`);
 
     // Get weekly hours for this allocation
     const { data: weeklyHours, error: weeklyError } = await supabase
@@ -150,11 +152,11 @@ async function calculatePlannedHoursForUser(
       .order('week_number', { ascending: true });
 
     if (weeklyError || !weeklyHours || weeklyHours.length === 0) {
-      console.log(`[Planned Hours] No weekly hours found for allocation ${allocation.id}:`, weeklyError?.message);
+      console.log(`[Planned Hours] No weekly hours found for allocation ${allocation.id}:`, weeklyError?.message || 'No weekly hours records');
       return { plannedDayHours, plannedTotalHours };
     }
 
-    console.log(`[Planned Hours] Found ${weeklyHours.length} weekly hour entries for allocation ${allocation.id}`);
+    console.log(`[Planned Hours] ✓ Found ${weeklyHours.length} weekly hour entries for allocation ${allocation.id}`);
 
     // Create a map of week number to hours
     const weekHoursMap: { [weekNumber: number]: number } = {};
@@ -163,11 +165,16 @@ async function calculatePlannedHoursForUser(
       weekHoursMap[wh.week_number] = hours;
       console.log(`[Planned Hours] Week ${wh.week_number}: ${hours} hours`);
     }
+    
+    const totalWeeklyHours = Object.values(weekHoursMap).reduce((sum, h) => sum + h, 0);
+    console.log(`[Planned Hours] Total weekly hours across all weeks: ${totalWeeklyHours.toFixed(2)}`);
 
     // Calculate planned hours per day
     // Parse start date and normalize to avoid timezone issues
     const startDate = new Date(projectStartDate + 'T00:00:00');
     startDate.setHours(0, 0, 0, 0);
+    console.log(`[Planned Hours] Project start date: ${projectStartDate}, normalized: ${startDate.toISOString().split('T')[0]}`);
+    console.log(`[Planned Hours] Date range: ${dateRange.length} dates from ${dateRange[0]} to ${dateRange[dateRange.length - 1]}`);
     
     // Count weekdays per week for accurate distribution
     const weekWeekdayCount: { [weekNumber: number]: number } = {};
@@ -183,7 +190,10 @@ async function calculatePlannedHoursForUser(
       }
     }
     
+    console.log(`[Planned Hours] Weekday counts per week:`, weekWeekdayCount);
+    
     // Second pass: distribute weekly hours to weekdays only
+    let datesWithPlannedHours = 0;
     for (const dateStr of dateRange) {
       const date = new Date(dateStr + 'T00:00:00');
       date.setHours(0, 0, 0, 0);
@@ -197,13 +207,19 @@ async function calculatePlannedHoursForUser(
         
         plannedDayHours[dateStr] = dailyHours;
         plannedTotalHours += dailyHours;
+        datesWithPlannedHours++;
       } else {
         // Weekend or no planned hours for this week
         plannedDayHours[dateStr] = 0;
       }
     }
 
-    console.log(`[Planned Hours] Calculated ${plannedTotalHours.toFixed(2)} total planned hours for user ${userId}`);
+    console.log(`[Planned Hours] ✓ Calculated ${plannedTotalHours.toFixed(2)} total planned hours for user ${userId}`);
+    console.log(`[Planned Hours] Dates with planned hours: ${datesWithPlannedHours} out of ${dateRange.length}`);
+    if (datesWithPlannedHours > 0) {
+      const sampleDates = Object.entries(plannedDayHours).filter(([_, h]) => h > 0).slice(0, 3);
+      console.log(`[Planned Hours] Sample planned day hours:`, sampleDates);
+    }
   } catch (error) {
     console.error('[Planned Hours] Error calculating planned hours:', error);
     // Return empty planned hours on error
@@ -354,8 +370,8 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
     throw membersError;
   }
 
-  // Generate date range
-  const dateRange = generateDateRange(project.start_date, project.end_date);
+  // Generate date range and normalize dates to YYYY-MM-DD format
+  const dateRange = generateDateRange(project.start_date, project.end_date).map(d => d.split('T')[0]);
 
   // Get all timesheets for this project
   const { data: timesheets, error: timesheetsError } = await supabase
@@ -371,24 +387,50 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
   const timesheetIds = (timesheets || []).map((t: any) => t.id);
   const entriesMap = new Map<string, any[]>();
 
+  console.log(`[Approval] Fetching entries for ${timesheetIds.length} timesheets:`, timesheetIds);
+
   if (timesheetIds.length > 0) {
     const { data: entries, error: entriesError } = await supabase
       .from('timesheet_entries')
       .select('timesheet_id, date, hours')
-      .in('timesheet_id', timesheetIds);
+      .in('timesheet_id', timesheetIds)
+      .order('date', { ascending: true });
 
     if (entriesError) {
       console.error('[Approval] Error fetching timesheet entries:', entriesError);
     } else if (entries) {
       console.log(`[Approval] Fetched ${entries.length} timesheet entries for ${timesheetIds.length} timesheets`);
+      
+      // Log sample entries for debugging
+      if (entries.length > 0) {
+        console.log('[Approval] Sample entries:', entries.slice(0, 5).map((e: any) => ({
+          timesheet_id: e.timesheet_id,
+          date: e.date,
+          hours: e.hours
+        })));
+      }
+      
       // Group entries by timesheet_id
       entries.forEach((entry: any) => {
+        // Normalize date to ensure consistency
+        const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
+        const normalizedEntry = { ...entry, date: normalizedDate };
+        
         if (!entriesMap.has(entry.timesheet_id)) {
           entriesMap.set(entry.timesheet_id, []);
         }
-        entriesMap.get(entry.timesheet_id)!.push(entry);
+        entriesMap.get(entry.timesheet_id)!.push(normalizedEntry);
       });
+      
+      // Log grouped entries
+      entriesMap.forEach((entryList, timesheetId) => {
+        console.log(`[Approval] Timesheet ${timesheetId}: ${entryList.length} entries`);
+      });
+    } else {
+      console.log('[Approval] No entries found for any timesheets');
     }
+  } else {
+    console.log('[Approval] No timesheets found for project');
   }
 
   // Get existing costing data
@@ -429,19 +471,50 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
     const dayHours: { [date: string]: number } = {};
     let totalHours = 0;
 
+    // Initialize all dates in dateRange with 0
+    for (const date of dateRange) {
+      dayHours[date] = 0;
+    }
+
     if (timesheet) {
       const entries = entriesMap.get(timesheet.id) || [];
-      console.log(`[Approval] User ${member.user_id} (${user?.email}): Found ${entries.length} entries for timesheet ${timesheet.id}`);
+      console.log(`[Approval] User ${member.user_id} (${user?.email}): Found ${entries.length} entries for timesheet ${timesheet.id} (status: ${timesheet.status})`);
+      
+      if (entries.length === 0) {
+        console.warn(`[Approval] WARNING: Timesheet ${timesheet.id} has status ${timesheet.status} but NO entries found!`);
+      }
+      
+      // Log dateRange for comparison
+      console.log(`[Approval] DateRange for project: ${dateRange.length} dates, first: ${dateRange[0]}, last: ${dateRange[dateRange.length - 1]}`);
       
       for (const entry of entries) {
+        // Entry date is already normalized in entriesMap
+        const normalizedDate = entry.date;
         const hours = parseFloat(entry.hours || 0);
-        dayHours[entry.date] = hours;
-        totalHours += hours;
+        
+        if (normalizedDate && dateRange.includes(normalizedDate)) {
+          dayHours[normalizedDate] = hours;
+          totalHours += hours;
+          console.log(`[Approval] ✓ Mapped entry: date=${normalizedDate}, hours=${hours}`);
+        } else {
+          console.warn(`[Approval] ✗ Entry date mismatch: entry.date=${entry.date}, normalized=${normalizedDate}, in dateRange=${dateRange.includes(normalizedDate)}`);
+          // Try to find closest match
+          const matchingDate = dateRange.find(d => d === normalizedDate || d.split('T')[0] === normalizedDate);
+          if (matchingDate) {
+            dayHours[matchingDate] = hours;
+            totalHours += hours;
+            console.log(`[Approval] ✓ Found matching date: ${matchingDate}, mapped hours=${hours}`);
+          }
+        }
       }
       
       if (entries.length > 0) {
-        console.log(`[Approval] User ${member.user_id}: Total hours = ${totalHours.toFixed(2)}`);
+        console.log(`[Approval] User ${member.user_id}: Total hours = ${totalHours.toFixed(2)}, mapped ${Object.keys(dayHours).filter(d => dayHours[d] > 0).length} dates with hours > 0`);
+      } else {
+        console.log(`[Approval] User ${member.user_id}: No entries found for timesheet ${timesheet.id}`);
       }
+    } else {
+      console.log(`[Approval] User ${member.user_id}: No timesheet found`);
     }
 
     // Calculate planned hours (only if project has setup data)
@@ -485,6 +558,18 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
 
   const totalMembers = (members || []).length;
   const allSubmitted = submittedCount === totalMembers && totalMembers > 0;
+
+  // Summary logging
+  console.log(`[Approval] ===== SUMMARY for project ${projectId} =====`);
+  console.log(`[Approval] Total members: ${totalMembers}`);
+  console.log(`[Approval] Submitted: ${submittedCount}, Pending: ${pendingCount}`);
+  console.log(`[Approval] Approval rows: ${approvalRows.length}`);
+  approvalRows.forEach((row: any) => {
+    const hasEntries = row.total_hours > 0;
+    const hasPlanned = row.planned_total_hours !== undefined && row.planned_total_hours > 0;
+    console.log(`[Approval] - ${row.name} (${row.email}): ${row.total_hours.toFixed(2)}h actual${hasPlanned ? `, ${row.planned_total_hours.toFixed(2)}h planned` : ', no planned'}`);
+  });
+  console.log(`[Approval] ===========================================`);
 
   return {
     project,

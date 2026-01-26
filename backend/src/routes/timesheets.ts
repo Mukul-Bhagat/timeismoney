@@ -755,21 +755,52 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
 
     // Insert new entries
     if (entries.length > 0) {
-      const entriesToInsert = entries.map((entry: any) => ({
-        timesheet_id: timesheetId,
-        date: entry.date,
-        hours: parseFloat(entry.hours) || 0,
-        created_at: getCurrentUTC().toISOString(),
-        updated_at: getCurrentUTC().toISOString(),
-      }));
+      const entriesToInsert = entries.map((entry: any) => {
+        // Normalize date to YYYY-MM-DD format (remove time component if present)
+        const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
+        const hours = parseFloat(entry.hours) || 0;
+        
+        console.log(`[Timesheet Save] Entry: date=${entry.date} -> normalized=${normalizedDate}, hours=${hours}`);
+        
+        return {
+          timesheet_id: timesheetId,
+          date: normalizedDate,
+          hours: hours,
+          created_at: getCurrentUTC().toISOString(),
+          updated_at: getCurrentUTC().toISOString(),
+        };
+      });
 
-      const { error: insertError } = await supabase
+      console.log(`[Timesheet Save] Inserting ${entriesToInsert.length} entries for timesheet ${timesheetId}`);
+      
+      // Log entries with hours > 0 for debugging
+      const entriesWithHours = entriesToInsert.filter(e => e.hours > 0);
+      if (entriesWithHours.length > 0) {
+        console.log(`[Timesheet Save] ${entriesWithHours.length} entries with hours > 0:`, 
+          entriesWithHours.slice(0, 5).map(e => `${e.date}: ${e.hours}h`));
+      } else {
+        console.log(`[Timesheet Save] WARNING: All entries have 0 hours!`);
+      }
+      
+      const { data: insertedEntries, error: insertError } = await supabase
         .from('timesheet_entries')
-        .insert(entriesToInsert);
+        .insert(entriesToInsert)
+        .select();
 
       if (insertError) {
+        console.error('[Timesheet Save] Error inserting entries:', insertError);
         throw insertError;
       }
+      
+      console.log(`[Timesheet Save] Successfully inserted ${insertedEntries?.length || 0} entries`);
+      
+      // Verify inserted entries
+      if (insertedEntries && insertedEntries.length > 0) {
+        const verifiedWithHours = insertedEntries.filter((e: any) => parseFloat(e.hours) > 0);
+        console.log(`[Timesheet Save] Verified: ${verifiedWithHours.length} entries with hours > 0 in database`);
+      }
+    } else {
+      console.log(`[Timesheet Save] No entries to insert for timesheet ${timesheetId}`);
     }
 
     // Fetch updated timesheet with entries

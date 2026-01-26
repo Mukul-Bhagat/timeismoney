@@ -40,6 +40,18 @@ export function Approval() {
     }
   }, [user]);
 
+  // Auto-refresh project detail when modal is open (poll every 30 seconds)
+  useEffect(() => {
+    if (!selectedProject) return;
+
+    const interval = setInterval(() => {
+      console.log('[Approval] Auto-refreshing project data...');
+      fetchProjectDetail(selectedProject.project.id);
+    }, 30000); // Poll every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [selectedProject]);
+
   const fetchProjects = async () => {
     setLoading(true);
     setError(null);
@@ -263,10 +275,24 @@ export function Approval() {
   const totalDifference = totalHours - totalPlannedHours;
   const totalDifferencePercentage = totalPlannedHours > 0 ? (totalDifference / totalPlannedHours) * 100 : 0;
   
-  // Check if any row has planned data
+  // Check if any row has planned data (has planned_total_hours defined and > 0)
   const hasPlannedData = selectedProject 
-    ? selectedProject.approval_rows.some(row => row.planned_total_hours !== undefined)
+    ? selectedProject.approval_rows.some(row => 
+        row.planned_total_hours !== undefined && row.planned_total_hours > 0
+      )
     : false;
+  
+  // Debug logging
+  if (selectedProject) {
+    console.log('[Approval Frontend] Project data loaded:');
+    console.log('[Approval Frontend] - Total hours:', totalHours);
+    console.log('[Approval Frontend] - Total planned hours:', totalPlannedHours);
+    console.log('[Approval Frontend] - Has planned data:', hasPlannedData);
+    console.log('[Approval Frontend] - Approval rows:', selectedProject.approval_rows.length);
+    selectedProject.approval_rows.forEach((row: ProjectApprovalRow) => {
+      console.log(`[Approval Frontend] - ${row.name}: ${row.total_hours.toFixed(2)}h actual, ${row.planned_total_hours !== undefined ? row.planned_total_hours.toFixed(2) + 'h planned' : 'no planned'}`);
+    });
+  }
 
   // Calculate amounts with edited rates
   const getCalculatedAmount = (row: ProjectApprovalRow): number => {
@@ -342,16 +368,27 @@ export function Approval() {
             <div className="approval-modal-header">
               <div>
                 <h2>{selectedProject.project.title}</h2>
-                <p>
+                <p style={{ margin: '4px 0', fontSize: '14px', color: '#64748b' }}>
                   {formatDateIST(selectedProject.project.start_date, 'MMM dd, yyyy')} - {formatDateIST(selectedProject.project.end_date, 'MMM dd, yyyy')}
                 </p>
                 {selectedProject.project.description && (
                   <p style={{ marginTop: '8px' }}>{selectedProject.project.description}</p>
                 )}
               </div>
-              <button className="approval-modal-close" onClick={handleCloseModal}>
-                ×
-              </button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  className="approval-btn approval-btn-secondary"
+                  onClick={() => fetchProjectDetail(selectedProject.project.id)}
+                  disabled={loadingDetail}
+                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                  title="Refresh data to see latest submissions"
+                >
+                  {loadingDetail ? 'Refreshing...' : '🔄 Refresh'}
+                </button>
+                <button className="approval-modal-close" onClick={handleCloseModal}>
+                  ×
+                </button>
+              </div>
             </div>
 
             <div className="approval-modal-content">
