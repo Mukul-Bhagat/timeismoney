@@ -459,30 +459,61 @@ export function Timesheet() {
                                     min="0"
                                     max="24"
                                     step="0.5"
-                                    value={hours || ''}
+                                    value={hours === 0 ? '' : hours}
                                     onChange={(e) => {
-                                      const value = parseFloat(e.target.value) || 0;
-                                      if (validateCellHours(value)) {
-                                        const dayError = validateDayHours(
-                                          date,
-                                          projectData.project.id,
-                                          value
-                                        );
-                                        if (dayError) {
-                                          setValidationErrors((prev) => {
-                                            const newErrors = new Map(prev);
-                                            newErrors.set(errorKey, dayError);
-                                            return newErrors;
-                                          });
-                                        } else {
-                                          updateHours(projectData.project.id, date, value);
-                                        }
-                                      } else {
+                                      const inputValue = e.target.value;
+                                      
+                                      // Allow empty string during typing
+                                      if (inputValue === '') {
+                                        // Clear validation error and set to 0
                                         setValidationErrors((prev) => {
                                           const newErrors = new Map(prev);
-                                          newErrors.set(errorKey, 'Hours must be between 0 and 24');
+                                          newErrors.delete(errorKey);
                                           return newErrors;
                                         });
+                                        updateHours(projectData.project.id, date, 0);
+                                        return;
+                                      }
+                                      
+                                      const numValue = parseFloat(inputValue);
+                                      
+                                      // Only process if it's a valid number
+                                      if (!isNaN(numValue)) {
+                                        if (validateCellHours(numValue)) {
+                                          const dayError = validateDayHours(
+                                            date,
+                                            projectData.project.id,
+                                            numValue
+                                          );
+                                          if (dayError) {
+                                            setValidationErrors((prev) => {
+                                              const newErrors = new Map(prev);
+                                              newErrors.set(errorKey, dayError);
+                                              return newErrors;
+                                            });
+                                          } else {
+                                            // Clear error and update hours
+                                            setValidationErrors((prev) => {
+                                              const newErrors = new Map(prev);
+                                              newErrors.delete(errorKey);
+                                              return newErrors;
+                                            });
+                                            updateHours(projectData.project.id, date, numValue);
+                                          }
+                                        } else {
+                                          setValidationErrors((prev) => {
+                                            const newErrors = new Map(prev);
+                                            newErrors.set(errorKey, 'Hours must be between 0 and 24');
+                                            return newErrors;
+                                          });
+                                        }
+                                      }
+                                    }}
+                                    onBlur={(e) => {
+                                      // On blur, ensure we have a valid number or 0
+                                      const inputValue = e.target.value;
+                                      if (inputValue === '' || isNaN(parseFloat(inputValue))) {
+                                        updateHours(projectData.project.id, date, 0);
                                       }
                                     }}
                                     className={`timesheet-hours-input ${hasError ? 'error' : ''}`}

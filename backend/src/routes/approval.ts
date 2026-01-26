@@ -76,11 +76,28 @@ function generateDateRange(startDate: string, endDate: string): string[] {
 
 /**
  * Helper function to calculate week number from project start date
+ * Week 1 starts from the project start date
  */
 function getWeekNumber(date: Date, projectStartDate: Date): number {
-  const diffTime = date.getTime() - projectStartDate.getTime();
+  // Normalize dates to start of day to avoid timezone issues
+  const dateNormalized = new Date(date);
+  dateNormalized.setHours(0, 0, 0, 0);
+  const startNormalized = new Date(projectStartDate);
+  startNormalized.setHours(0, 0, 0, 0);
+  
+  const diffTime = dateNormalized.getTime() - startNormalized.getTime();
   const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-  return Math.floor(diffDays / 7) + 1; // Week 1, 2, 3, etc.
+  
+  // Week 1 includes days 0-6, Week 2 includes days 7-13, etc.
+  return Math.floor(diffDays / 7) + 1;
+}
+
+/**
+ * Check if a date is a weekday (Monday-Friday)
+ */
+function isWeekday(date: Date): boolean {
+  const day = date.getDay();
+  return day >= 1 && day <= 5; // Monday = 1, Friday = 5
 }
 
 /**
@@ -104,9 +121,11 @@ async function calculatePlannedHoursForUser(
       .single();
 
     if (setupError || !projectSetup) {
-      // No project setup - return empty planned hours
+      console.log(`[Planned Hours] No project setup found for project ${projectId}:`, setupError?.message);
       return { plannedDayHours, plannedTotalHours };
     }
+
+    console.log(`[Planned Hours] Found project setup ${projectSetup.id} for project ${projectId}`);
 
     // Get allocation for this user
     const { data: allocation, error: allocError } = await supabase
@@ -117,9 +136,11 @@ async function calculatePlannedHoursForUser(
       .single();
 
     if (allocError || !allocation) {
-      // No allocation for this user - return empty planned hours
+      console.log(`[Planned Hours] No allocation found for user ${userId} in project ${projectId}:`, allocError?.message);
       return { plannedDayHours, plannedTotalHours };
     }
+
+    console.log(`[Planned Hours] Found allocation ${allocation.id} for user ${userId}`);
 
     // Get weekly hours for this allocation
     const { data: weeklyHours, error: weeklyError } = await supabase
@@ -129,34 +150,62 @@ async function calculatePlannedHoursForUser(
       .order('week_number', { ascending: true });
 
     if (weeklyError || !weeklyHours || weeklyHours.length === 0) {
-      // No weekly hours - return empty planned hours
+      console.log(`[Planned Hours] No weekly hours found for allocation ${allocation.id}:`, weeklyError?.message);
       return { plannedDayHours, plannedTotalHours };
     }
+
+    console.log(`[Planned Hours] Found ${weeklyHours.length} weekly hour entries for allocation ${allocation.id}`);
 
     // Create a map of week number to hours
     const weekHoursMap: { [weekNumber: number]: number } = {};
     for (const wh of weeklyHours) {
-      weekHoursMap[wh.week_number] = parseFloat(wh.hours || 0);
+      const hours = parseFloat(wh.hours || 0);
+      weekHoursMap[wh.week_number] = hours;
+      console.log(`[Planned Hours] Week ${wh.week_number}: ${hours} hours`);
     }
 
     // Calculate planned hours per day
-    const startDate = new Date(projectStartDate);
+    // Parse start date and normalize to avoid timezone issues
+    const startDate = new Date(projectStartDate + 'T00:00:00');
+    startDate.setHours(0, 0, 0, 0);
     
+    // Count weekdays per week for accurate distribution
+    const weekWeekdayCount: { [weekNumber: number]: number } = {};
+    
+    // First pass: count weekdays per week in the date range
     for (const dateStr of dateRange) {
-      const date = new Date(dateStr);
+      const date = new Date(dateStr + 'T00:00:00');
+      date.setHours(0, 0, 0, 0);
+      const weekNumber = getWeekNumber(date, startDate);
+      
+      if (isWeekday(date)) {
+        weekWeekdayCount[weekNumber] = (weekWeekdayCount[weekNumber] || 0) + 1;
+      }
+    }
+    
+    // Second pass: distribute weekly hours to weekdays only
+    for (const dateStr of dateRange) {
+      const date = new Date(dateStr + 'T00:00:00');
+      date.setHours(0, 0, 0, 0);
       const weekNumber = getWeekNumber(date, startDate);
       const weeklyHours = weekHoursMap[weekNumber] || 0;
       
-      // Distribute weekly hours evenly across weekdays (Monday-Friday)
-      // For simplicity, we'll distribute evenly across all 7 days
-      // In a more sophisticated implementation, you could check if it's a weekday
-      const dailyHours = weeklyHours / 7;
-      
-      plannedDayHours[dateStr] = dailyHours;
-      plannedTotalHours += dailyHours;
+      if (weeklyHours > 0 && isWeekday(date)) {
+        // Distribute weekly hours evenly across weekdays in that week
+        const weekdayCount = weekWeekdayCount[weekNumber] || 1; // Avoid division by zero
+        const dailyHours = weeklyHours / weekdayCount;
+        
+        plannedDayHours[dateStr] = dailyHours;
+        plannedTotalHours += dailyHours;
+      } else {
+        // Weekend or no planned hours for this week
+        plannedDayHours[dateStr] = 0;
+      }
     }
+
+    console.log(`[Planned Hours] Calculated ${plannedTotalHours.toFixed(2)} total planned hours for user ${userId}`);
   } catch (error) {
-    console.error('Error calculating planned hours:', error);
+    console.error('[Planned Hours] Error calculating planned hours:', error);
     // Return empty planned hours on error
   }
 

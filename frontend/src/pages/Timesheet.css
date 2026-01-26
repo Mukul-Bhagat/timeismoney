@@ -157,10 +157,14 @@
   width: 100%;
   border-collapse: collapse;
   min-width: 600px;
+  table-layout: auto;
 }
 
 .timesheet-table thead {
   background: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
 .timesheet-table th {
@@ -171,6 +175,7 @@
   color: #64748b;
   border-bottom: 2px solid #e2e8f0;
   white-space: nowrap;
+  vertical-align: middle;
 }
 
 .timesheet-table td {
@@ -178,6 +183,7 @@
   text-align: center;
   border-bottom: 1px solid #e2e8f0;
   font-size: 14px;
+  vertical-align: middle;
 }
 
 /* Sticky Columns */
@@ -185,24 +191,36 @@
   position: sticky;
   background: white;
   z-index: 10;
-  min-width: 120px;
+  min-width: 150px;
+  max-width: 200px;
   text-align: left !important;
   padding-left: 16px !important;
+  padding-right: 16px !important;
 }
 
 /* First sticky column (Project) */
 .timesheet-sticky-col:first-of-type {
   left: 0;
+  z-index: 12;
 }
 
 /* Second sticky column (Role) */
 .timesheet-sticky-col:nth-of-type(2) {
-  left: 120px; /* Width of first column */
+  left: 150px; /* Width of first column */
+  z-index: 12;
 }
 
 .timesheet-table thead .timesheet-sticky-col {
   background: #f8fafc;
-  z-index: 11;
+  z-index: 13;
+}
+
+.timesheet-table thead .timesheet-sticky-col:first-of-type {
+  z-index: 14;
+}
+
+.timesheet-table thead .timesheet-sticky-col:nth-of-type(2) {
+  z-index: 14;
 }
 
 .timesheet-table tbody tr:hover .timesheet-sticky-col {
@@ -214,18 +232,28 @@
   background: #e0e7ff !important;
   font-weight: 600;
   color: #1e40af !important;
+  border-left: 2px solid #c7d2fe;
+  border-right: 2px solid #c7d2fe;
+}
+
+.timesheet-week-header:first-of-type {
+  border-left: none;
 }
 
 .timesheet-date-header {
   font-size: 11px;
   font-weight: 500;
-  min-width: 60px;
+  min-width: 70px;
+  max-width: 80px;
+  padding: 8px 4px;
 }
 
 /* Cells */
 .timesheet-cell {
   position: relative;
-  min-width: 60px;
+  min-width: 70px;
+  max-width: 80px;
+  padding: 8px 4px;
 }
 
 .timesheet-hours-input {
@@ -278,6 +306,9 @@
   font-weight: 600;
   background: #f8fafc;
   color: #1e293b;
+  min-width: 80px;
+  padding: 12px 8px;
+  border-left: 2px solid #e2e8f0;
 }
 
 /* History View */
