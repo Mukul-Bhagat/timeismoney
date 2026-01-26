@@ -834,6 +834,7 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
 /**
  * POST /api/timesheets/:id/submit
  * Submit timesheet (changes status to SUBMITTED)
+ * Optionally accepts entries in request body to save them before submitting
  */
 router.post('/:id/submit', verifyAuth, async (req: AuthRequest, res: Response) => {
   try {
@@ -846,6 +847,7 @@ router.post('/:id/submit', verifyAuth, async (req: AuthRequest, res: Response) =
 
     const { id: idParam } = req.params;
     const id = Array.isArray(idParam) ? idParam[0] : idParam;
+    const { entries: entriesFromBody } = req.body; // Optional entries from request body
 
     // Get timesheet
     const { data: timesheet, error: fetchError } = await supabase
@@ -877,7 +879,107 @@ router.post('/:id/submit', verifyAuth, async (req: AuthRequest, res: Response) =
       });
     }
 
-    // Validate entries exist
+    // If entries are provided in request body, save them first
+    if (entriesFromBody && Array.isArray(entriesFromBody) && entriesFromBody.length > 0) {
+      console.log(`[Timesheet Submit] Saving ${entriesFromBody.length} entries before submission`);
+      
+      // Get project to validate date range
+      const { data: project, error: projectError } = await supabase
+        .from('projects')
+        .select('start_date, end_date')
+        .eq('id', timesheet.project_id)
+        .single();
+
+      if (projectError || !project) {
+        return res.status(404).json({
+          success: false,
+          message: 'Project not found',
+        });
+      }
+
+      // Validate entries
+      const projectStartDate = new Date(project.start_date);
+      const projectEndDate = new Date(project.end_date);
+
+      for (const entry of entriesFromBody) {
+        // Validate cell hours
+        if (!validateCellHours(parseFloat(entry.hours || 0))) {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid hours value for date ${entry.date}. Hours must be between 0 and 24.`,
+          });
+        }
+
+        // Validate date is within project range
+        const entryDate = new Date(entry.date);
+        if (entryDate < projectStartDate || entryDate > projectEndDate) {
+          return res.status(400).json({
+            success: false,
+            message: `Date ${entry.date} is outside project date range`,
+          });
+        }
+      }
+
+      // Validate day hours across all projects
+      for (const entry of entriesFromBody) {
+        const dayValidation = await validateDayHours(
+          req.user.id,
+          entry.date,
+          timesheet.project_id,
+          parseFloat(entry.hours || 0),
+          id
+        );
+
+        if (!dayValidation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: dayValidation.message || 'Validation failed',
+          });
+        }
+      }
+
+      // Delete existing entries
+      await supabase.from('timesheet_entries').delete().eq('timesheet_id', id);
+
+      // Insert new entries
+      const entriesToInsert = entriesFromBody.map((entry: any) => {
+        // Normalize date to YYYY-MM-DD format (remove time component if present)
+        const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
+        const hours = parseFloat(entry.hours || 0);
+        
+        console.log(`[Timesheet Submit] Entry: date=${entry.date} -> normalized=${normalizedDate}, hours=${hours}`);
+        
+        return {
+          timesheet_id: id,
+          date: normalizedDate,
+          hours: hours,
+          created_at: getCurrentUTC().toISOString(),
+          updated_at: getCurrentUTC().toISOString(),
+        };
+      });
+
+      console.log(`[Timesheet Submit] Inserting ${entriesToInsert.length} entries for timesheet ${id}`);
+      
+      const { data: insertedEntries, error: insertError } = await supabase
+        .from('timesheet_entries')
+        .insert(entriesToInsert)
+        .select();
+
+      if (insertError) {
+        console.error('[Timesheet Submit] Error inserting entries:', insertError);
+        throw insertError;
+      }
+      
+      console.log(`[Timesheet Submit] Successfully inserted ${insertedEntries?.length || 0} entries`);
+      
+      // Verify inserted entries
+      if (insertedEntries && insertedEntries.length > 0) {
+        const verifiedWithHours = insertedEntries.filter((e: any) => parseFloat(e.hours) > 0);
+        console.log(`[Timesheet Submit] Verified: ${verifiedWithHours.length} entries with hours > 0 in database`);
+      }
+    }
+
+    // Get entries from database (either existing or just saved)
     const { data: entries, error: entriesError } = await supabase
       .from('timesheet_entries')
       .select('*')
@@ -887,9 +989,17 @@ router.post('/:id/submit', verifyAuth, async (req: AuthRequest, res: Response) =
       throw entriesError;
     }
 
+    // Validate that entries exist
+    if (!entries || entries.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot submit timesheet without entries. Please add hours before submitting.',
+      });
+    }
+
     // Validate all entries
-    for (const entry of entries || []) {
-      if (!validateCellHours(parseFloat(entry.hours))) {
+    for (const entry of entries) {
+      if (!validateCellHours(parseFloat(entry.hours || 0))) {
         return res.status(400).json({
           success: false,
           message: `Invalid hours value for date ${entry.date}`,
@@ -900,7 +1010,7 @@ router.post('/:id/submit', verifyAuth, async (req: AuthRequest, res: Response) =
         req.user.id,
         entry.date,
         timesheet.project_id,
-        parseFloat(entry.hours),
+        parseFloat(entry.hours || 0),
         id
       );
 

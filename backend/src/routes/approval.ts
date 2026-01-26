@@ -406,15 +406,21 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
         console.log('[Approval] Sample entries:', entries.slice(0, 5).map((e: any) => ({
           timesheet_id: e.timesheet_id,
           date: e.date,
-          hours: e.hours
+          hours: e.hours,
+          hours_type: typeof e.hours
         })));
+        
+        // Count entries with hours > 0
+        const entriesWithHours = entries.filter((e: any) => parseFloat(e.hours || 0) > 0);
+        console.log(`[Approval] Entries with hours > 0: ${entriesWithHours.length} out of ${entries.length}`);
       }
       
       // Group entries by timesheet_id
       entries.forEach((entry: any) => {
         // Normalize date to ensure consistency
         const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
-        const normalizedEntry = { ...entry, date: normalizedDate };
+        const hours = parseFloat(entry.hours || 0);
+        const normalizedEntry = { ...entry, date: normalizedDate, hours: hours };
         
         if (!entriesMap.has(entry.timesheet_id)) {
           entriesMap.set(entry.timesheet_id, []);
@@ -490,12 +496,22 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
       for (const entry of entries) {
         // Entry date is already normalized in entriesMap
         const normalizedDate = entry.date;
-        const hours = parseFloat(entry.hours || 0);
+        // Ensure hours is a number - handle string, number, or null/undefined
+        let hours = 0;
+        if (entry.hours !== null && entry.hours !== undefined) {
+          hours = typeof entry.hours === 'string' ? parseFloat(entry.hours) : Number(entry.hours);
+          if (isNaN(hours)) {
+            console.warn(`[Approval] Invalid hours value for entry: ${JSON.stringify(entry)}`);
+            hours = 0;
+          }
+        }
         
         if (normalizedDate && dateRange.includes(normalizedDate)) {
           dayHours[normalizedDate] = hours;
           totalHours += hours;
-          console.log(`[Approval] ✓ Mapped entry: date=${normalizedDate}, hours=${hours}`);
+          if (hours > 0) {
+            console.log(`[Approval] ✓ Mapped entry: date=${normalizedDate}, hours=${hours}`);
+          }
         } else {
           console.warn(`[Approval] ✗ Entry date mismatch: entry.date=${entry.date}, normalized=${normalizedDate}, in dateRange=${dateRange.includes(normalizedDate)}`);
           // Try to find closest match
@@ -503,7 +519,9 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
           if (matchingDate) {
             dayHours[matchingDate] = hours;
             totalHours += hours;
-            console.log(`[Approval] ✓ Found matching date: ${matchingDate}, mapped hours=${hours}`);
+            if (hours > 0) {
+              console.log(`[Approval] ✓ Found matching date: ${matchingDate}, mapped hours=${hours}`);
+            }
           }
         }
       }

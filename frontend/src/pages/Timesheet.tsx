@@ -239,16 +239,55 @@ export function Timesheet() {
       return;
     }
 
+    // Create or get timesheet ID
+    let timesheetId: string;
+    
     if (!projectData.timesheet) {
-      setError('Please save draft before submitting');
-      return;
+      // No timesheet exists yet - need to create one first
+      // Convert entries map to array
+      const entries: DateEntry[] = projectData.dates.map((date) => ({
+        date,
+        hours: projectData.entries.get(date) || 0,
+      }));
+
+      setSubmitting(projectData.project.id);
+      setError(null);
+
+      try {
+        // Create timesheet first
+        const createResponse = await api.post('/api/timesheets', {
+          project_id: projectData.project.id,
+          entries,
+        });
+
+        if (!createResponse.data.success || !createResponse.data.timesheet) {
+          throw new Error('Failed to create timesheet');
+        }
+
+        timesheetId = createResponse.data.timesheet.id;
+      } catch (err: any) {
+        setError(err.response?.data?.message || err.message || 'Failed to create timesheet');
+        setSubmitting(null);
+        return;
+      }
+    } else {
+      timesheetId = projectData.timesheet.id;
     }
 
     setSubmitting(projectData.project.id);
     setError(null);
 
     try {
-      await api.post(`/api/timesheets/${projectData.timesheet.id}/submit`);
+      // Convert entries map to array for submission
+      const entries: DateEntry[] = projectData.dates.map((date) => ({
+        date,
+        hours: projectData.entries.get(date) || 0,
+      }));
+
+      // Submit with entries in body (backend will save them if needed)
+      await api.post(`/api/timesheets/${timesheetId}/submit`, {
+        entries,
+      });
 
       // Refresh timesheets
       await fetchActiveTimesheets();
