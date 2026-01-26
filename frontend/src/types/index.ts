@@ -145,6 +145,10 @@ export interface ProjectApprovalRow {
   timesheet_status: TimesheetStatus | null;
   submitted_at: string | null;
   total_hours: number;
+  planned_total_hours?: number;
+  planned_day_hours?: { [date: string]: number };
+  difference_hours?: number;
+  difference_percentage?: number;
   rate: number;
   amount: number;
   quote_amount: number | null;

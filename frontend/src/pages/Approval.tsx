@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import type { ProjectWithSubmittedTimesheets, ProjectApprovalData, ProjectApprovalRow } from '../types';
-import { formatDate, calculateTotalHoursFromRows } from '../utils/approval';
+import { formatDate, calculateTotalHoursFromRows, calculateTotalPlannedHours, getDifferenceColor } from '../utils/approval';
 import { formatDateIST } from '../utils/timezone';
 import './Page.css';
 import './Approval.css';
@@ -259,6 +259,14 @@ export function Approval() {
 
   // Calculate totals
   const totalHours = selectedProject ? calculateTotalHoursFromRows(selectedProject.approval_rows) : 0;
+  const totalPlannedHours = selectedProject ? calculateTotalPlannedHours(selectedProject.approval_rows) : 0;
+  const totalDifference = totalHours - totalPlannedHours;
+  const totalDifferencePercentage = totalPlannedHours > 0 ? (totalDifference / totalPlannedHours) * 100 : 0;
+  
+  // Check if any row has planned data
+  const hasPlannedData = selectedProject 
+    ? selectedProject.approval_rows.some(row => row.planned_total_hours !== undefined)
+    : false;
 
   // Calculate amounts with edited rates
   const getCalculatedAmount = (row: ProjectApprovalRow): number => {
@@ -401,6 +409,8 @@ export function Approval() {
                           </th>
                         ))}
                         <th>Total Hours</th>
+                        {hasPlannedData && <th>Planned Hours</th>}
+                        {hasPlannedData && <th>Difference</th>}
                         <th>Rate</th>
                         <th>Amount</th>
                         <th>Quote Amount</th>
@@ -411,12 +421,52 @@ export function Approval() {
                         <tr key={row.user_id}>
                           <td className="approval-sticky-col">{row.name}</td>
                           <td className="approval-sticky-col">{row.role}</td>
-                          {selectedProject.date_range.map((date) => (
-                            <td key={date}>
-                              {row.day_hours[date] ? row.day_hours[date].toFixed(2) : '0.00'}
-                            </td>
-                          ))}
+                          {selectedProject.date_range.map((date) => {
+                            const actualHours = row.day_hours[date] || 0;
+                            const plannedHours = row.planned_day_hours?.[date] || 0;
+                            const showPlanned = hasPlannedData && plannedHours > 0;
+                            
+                            return (
+                              <td key={date}>
+                                {showPlanned ? (
+                                  <div className="approval-hours-cell">
+                                    <span className="approval-hours-actual">
+                                      {actualHours.toFixed(2)}
+                                    </span>
+                                    <span className="approval-hours-planned">
+                                      ({plannedHours.toFixed(2)} planned)
+                                    </span>
+                                  </div>
+                                ) : (
+                                  actualHours.toFixed(2)
+                                )}
+                              </td>
+                            );
+                          })}
                           <td>{row.total_hours.toFixed(2)}</td>
+                          {hasPlannedData && (
+                            <td>
+                              {row.planned_total_hours !== undefined 
+                                ? row.planned_total_hours.toFixed(2) 
+                                : '-'}
+                            </td>
+                          )}
+                          {hasPlannedData && (
+                            <td>
+                              {row.difference_hours !== undefined ? (
+                                <div className={`approval-diff-cell ${getDifferenceColor(row.difference_percentage)}`}>
+                                  <span className="approval-diff-value">
+                                    {row.difference_hours >= 0 ? '+' : ''}{row.difference_hours.toFixed(2)}
+                                  </span>
+                                  {row.difference_percentage !== undefined && (
+                                    <span className="approval-diff-percentage">
+                                      {row.difference_percentage >= 0 ? '+' : ''}{row.difference_percentage.toFixed(1)}%
+                                    </span>
+                                  )}
+                                </div>
+                              ) : '-'}
+                            </td>
+                          )}
                           <td>
                             <input
                               type="number"
@@ -453,6 +503,23 @@ export function Approval() {
                           </td>
                         ))}
                         <td><strong>{totalHours.toFixed(2)}</strong></td>
+                        {hasPlannedData && (
+                          <td>
+                            <strong>{totalPlannedHours.toFixed(2)}</strong>
+                          </td>
+                        )}
+                        {hasPlannedData && (
+                          <td>
+                            <div className={`approval-diff-cell ${getDifferenceColor(totalDifferencePercentage)}`}>
+                              <span className="approval-diff-value">
+                                <strong>{totalDifference >= 0 ? '+' : ''}{totalDifference.toFixed(2)}</strong>
+                              </span>
+                              <span className="approval-diff-percentage">
+                                {totalDifferencePercentage >= 0 ? '+' : ''}{totalDifferencePercentage.toFixed(1)}%
+                              </span>
+                            </div>
+                          </td>
+                        )}
                         <td></td>
                         <td><strong>{getTotalAmountWithEdits().toFixed(2)}</strong></td>
                         <td>

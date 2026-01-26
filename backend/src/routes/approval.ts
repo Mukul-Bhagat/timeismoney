@@ -75,6 +75,95 @@ function generateDateRange(startDate: string, endDate: string): string[] {
 }
 
 /**
+ * Helper function to calculate week number from project start date
+ */
+function getWeekNumber(date: Date, projectStartDate: Date): number {
+  const diffTime = date.getTime() - projectStartDate.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  return Math.floor(diffDays / 7) + 1; // Week 1, 2, 3, etc.
+}
+
+/**
+ * Helper function to calculate planned hours for a user from project setup
+ */
+async function calculatePlannedHoursForUser(
+  userId: string,
+  projectId: string,
+  projectStartDate: string,
+  dateRange: string[]
+): Promise<{ plannedDayHours: { [date: string]: number }; plannedTotalHours: number }> {
+  const plannedDayHours: { [date: string]: number } = {};
+  let plannedTotalHours = 0;
+
+  try {
+    // Check if project has project_setup (Type B projects)
+    const { data: projectSetup, error: setupError } = await supabase
+      .from('project_setups')
+      .select('id')
+      .eq('project_id', projectId)
+      .single();
+
+    if (setupError || !projectSetup) {
+      // No project setup - return empty planned hours
+      return { plannedDayHours, plannedTotalHours };
+    }
+
+    // Get allocation for this user
+    const { data: allocation, error: allocError } = await supabase
+      .from('project_role_allocations')
+      .select('id')
+      .eq('project_setup_id', projectSetup.id)
+      .eq('user_id', userId)
+      .single();
+
+    if (allocError || !allocation) {
+      // No allocation for this user - return empty planned hours
+      return { plannedDayHours, plannedTotalHours };
+    }
+
+    // Get weekly hours for this allocation
+    const { data: weeklyHours, error: weeklyError } = await supabase
+      .from('project_weekly_hours')
+      .select('week_number, hours')
+      .eq('allocation_id', allocation.id)
+      .order('week_number', { ascending: true });
+
+    if (weeklyError || !weeklyHours || weeklyHours.length === 0) {
+      // No weekly hours - return empty planned hours
+      return { plannedDayHours, plannedTotalHours };
+    }
+
+    // Create a map of week number to hours
+    const weekHoursMap: { [weekNumber: number]: number } = {};
+    for (const wh of weeklyHours) {
+      weekHoursMap[wh.week_number] = parseFloat(wh.hours || 0);
+    }
+
+    // Calculate planned hours per day
+    const startDate = new Date(projectStartDate);
+    
+    for (const dateStr of dateRange) {
+      const date = new Date(dateStr);
+      const weekNumber = getWeekNumber(date, startDate);
+      const weeklyHours = weekHoursMap[weekNumber] || 0;
+      
+      // Distribute weekly hours evenly across weekdays (Monday-Friday)
+      // For simplicity, we'll distribute evenly across all 7 days
+      // In a more sophisticated implementation, you could check if it's a weekday
+      const dailyHours = weeklyHours / 7;
+      
+      plannedDayHours[dateStr] = dailyHours;
+      plannedTotalHours += dailyHours;
+    }
+  } catch (error) {
+    console.error('Error calculating planned hours:', error);
+    // Return empty planned hours on error
+  }
+
+  return { plannedDayHours, plannedTotalHours };
+}
+
+/**
  * GET /api/approval/projects
  * Get projects that have at least one SUBMITTED timesheet
  * Access: ADMIN, MANAGER only
@@ -286,6 +375,20 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
       }
     }
 
+    // Calculate planned hours (only if project has setup data)
+    const { plannedDayHours, plannedTotalHours } = await calculatePlannedHoursForUser(
+      member.user_id,
+      projectId,
+      project.start_date,
+      dateRange
+    );
+
+    // Calculate difference
+    const differenceHours = totalHours - plannedTotalHours;
+    const differencePercentage = plannedTotalHours > 0 
+      ? (differenceHours / plannedTotalHours) * 100 
+      : 0;
+
     // Calculate amount from costing or default
     const rate = costing ? parseFloat(costing.rate || 0) : 0;
     const amount = totalHours * rate;
@@ -300,6 +403,10 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
       timesheet_status: timesheet?.status || null,
       submitted_at: timesheet?.submitted_at || null,
       total_hours: totalHours,
+      planned_total_hours: plannedTotalHours > 0 ? plannedTotalHours : undefined,
+      planned_day_hours: Object.keys(plannedDayHours).length > 0 ? plannedDayHours : undefined,
+      difference_hours: plannedTotalHours > 0 ? differenceHours : undefined,
+      difference_percentage: plannedTotalHours > 0 ? differencePercentage : undefined,
       rate: rate,
       amount: amount,
       quote_amount: quoteAmount,
@@ -680,6 +787,9 @@ router.get('/projects/:id/export/excel', verifyAuth, requireRole('ADMIN', 'MANAG
     // Generate Excel workbook
     const workbook = XLSX.utils.book_new();
     
+    // Check if any row has planned hours data
+    const hasPlannedData = approvalRows.some((r: any) => r.planned_total_hours !== undefined);
+    
     // Prepare worksheet data
     const worksheetData: any[][] = [];
     
@@ -692,6 +802,7 @@ router.get('/projects/:id/export/excel', verifyAuth, requireRole('ADMIN', 'MANAG
         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       }),
       'Total Hours',
+      ...(hasPlannedData ? ['Planned Hours', 'Difference', 'Difference %'] : []),
       'Rate',
       'Amount',
       'Quote Amount',
@@ -705,6 +816,11 @@ router.get('/projects/:id/export/excel', verifyAuth, requireRole('ADMIN', 'MANAG
         row.role,
         ...dateRange.map((date: string) => row.day_hours[date] || 0),
         row.total_hours,
+        ...(hasPlannedData ? [
+          row.planned_total_hours || 0,
+          row.difference_hours !== undefined ? row.difference_hours : '',
+          row.difference_percentage !== undefined ? `${row.difference_percentage.toFixed(2)}%` : '',
+        ] : []),
         row.rate,
         row.amount,
         row.quote_amount || null,
@@ -714,6 +830,13 @@ router.get('/projects/:id/export/excel', verifyAuth, requireRole('ADMIN', 'MANAG
     
     // Totals row
     const totalHours = approvalRows.reduce((sum: number, r: any) => sum + r.total_hours, 0);
+    const totalPlannedHours = hasPlannedData 
+      ? approvalRows.reduce((sum: number, r: any) => sum + (r.planned_total_hours || 0), 0)
+      : 0;
+    const totalDifference = hasPlannedData ? totalHours - totalPlannedHours : 0;
+    const totalDifferencePercentage = hasPlannedData && totalPlannedHours > 0
+      ? (totalDifference / totalPlannedHours) * 100
+      : 0;
     const totalAmount = approvalRows.reduce((sum: number, r: any) => sum + r.amount, 0);
     const totalQuote = approvalRows.reduce((sum: number, r: any) => sum + (r.quote_amount || 0), 0);
     const totalsRow = [
@@ -721,6 +844,11 @@ router.get('/projects/:id/export/excel', verifyAuth, requireRole('ADMIN', 'MANAG
       '',
       ...dateRange.map(() => ''),
       totalHours,
+      ...(hasPlannedData ? [
+        totalPlannedHours,
+        totalDifference,
+        `${totalDifferencePercentage.toFixed(2)}%`,
+      ] : []),
       '',
       totalAmount,
       totalQuote,
@@ -736,6 +864,11 @@ router.get('/projects/:id/export/excel', verifyAuth, requireRole('ADMIN', 'MANAG
       { wch: 15 }, // Role
       ...dateRange.map(() => ({ wch: 12 })), // Date columns
       { wch: 12 }, // Total Hours
+      ...(hasPlannedData ? [
+        { wch: 14 }, // Planned Hours
+        { wch: 12 }, // Difference
+        { wch: 14 }, // Difference %
+      ] : []),
       { wch: 12 }, // Rate
       { wch: 12 }, // Amount
       { wch: 12 }, // Quote Amount
