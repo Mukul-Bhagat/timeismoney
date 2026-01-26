@@ -16,13 +16,17 @@ dotenv.config();
 const app = express();
 
 // Enable CORS properly for Render + Vercel
+// Get allowed origins from environment variable or use defaults
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
+  : [
+      "http://localhost:5173", // local development
+      "https://timeismoney-nbfm.onrender.com", // Render frontend
+    ];
+
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173", // local development
-      // Add your Vercel app URL here when ready
-      // "https://your-vercel-app.vercel.app"
-    ],
+    origin: allowedOrigins,
     credentials: true
   })
 );
