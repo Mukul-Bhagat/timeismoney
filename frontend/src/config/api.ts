@@ -1,11 +1,22 @@
 import axios from 'axios';
 
+// Get API base URL from environment variable
+// In production (Vercel), this should be set to your Render backend URL
+// Example: https://your-backend.onrender.com
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+
+// Validate API_BASE_URL
+if (!API_BASE_URL) {
+  console.warn('⚠️ VITE_API_BASE_URL is not set. Using default: http://localhost:5000');
+}
+
 // Create axios instance with base URL
 const api = axios.create({
-  baseURL: 'http://localhost:5000',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000, // 30 second timeout for API calls
 });
 
 // Request interceptor: Attach JWT token from localStorage

@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent, useRef } from 'react';
+import { useState, useEffect, type FormEvent, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -76,7 +76,7 @@ export function ManageUsers() {
     setCreating(true);
 
     try {
-      const response = await api.post('/api/users', {
+      await api.post('/api/users', {
         email,
         phone: phone || undefined,
         password,

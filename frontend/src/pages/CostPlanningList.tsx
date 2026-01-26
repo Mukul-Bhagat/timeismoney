@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../config/api';
-import { useAuth } from '../context/AuthContext';
 import type { ProjectWithSetup } from '../types';
 import './Page.css';
 import '../components/projects/Projects.css';
@@ -12,7 +11,6 @@ import '../components/projects/Projects.css';
  */
 export function CostPlanningList() {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [projects, setProjects] = useState<ProjectWithSetup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

@@ -1,5 +1,4 @@
-import { useState, FormEvent } from 'react';
-import { colors } from '../config/colors';
+import { useState, type FormEvent } from 'react';
 import './CreateOrganizationModal.css';
 
 interface CreateOrganizationModalProps {

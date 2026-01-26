@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import type { ProjectWithSubmittedTimesheets, ProjectApprovalData, ProjectApprovalRow } from '../types';
-import { formatDate, calculateTotalHoursFromRows, calculateTotalAmount, calculateTotalQuote } from '../utils/approval';
+import { formatDate, calculateTotalHoursFromRows } from '../utils/approval';
 import { formatDateIST } from '../utils/timezone';
 import './Page.css';
 import './Approval.css';
@@ -259,8 +259,6 @@ export function Approval() {
 
   // Calculate totals
   const totalHours = selectedProject ? calculateTotalHoursFromRows(selectedProject.approval_rows) : 0;
-  const totalAmount = selectedProject ? calculateTotalAmount(selectedProject.approval_rows) : 0;
-  const totalQuote = selectedProject ? calculateTotalQuote(selectedProject.approval_rows) : 0;
 
   // Calculate amounts with edited rates
   const getCalculatedAmount = (row: ProjectApprovalRow): number => {

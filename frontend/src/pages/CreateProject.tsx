@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../config/api';
-import { colors } from '../config/colors';
 import type { Role, User, ProjectType } from '../types';
 import './CreateProject.css';
 

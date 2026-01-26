@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../config/api';
 import { formatDateIST } from '../../utils/timezone';
-import { colors } from '../../config/colors';
 import './Dashboard.css';
 
 interface Organization {

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import api from '../config/api';
 import { useAuth } from './AuthContext';
 
@@ -18,13 +18,13 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const fetchCurrency = async () => {
-      if (!user?.organization_id) {
+      if (!user?.organizationId) {
         setLoading(false);
         return;
       }
 
       try {
-        const response = await api.get(`/api/organizations/${user.organization_id}`);
+        const response = await api.get(`/api/organizations/${user.organizationId}`);
         if (response.data) {
           setCurrency({
             code: response.data.currency_code || 'INR',
@@ -41,7 +41,7 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
     };
 
     fetchCurrency();
-  }, [user?.organization_id]);
+  }, [user?.organizationId]);
 
   const formatAmount = (amount: number): string => {
     const numAmount = Number(amount);

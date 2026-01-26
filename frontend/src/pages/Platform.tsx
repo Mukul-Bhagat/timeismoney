@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import api from '../config/api';
+import api, { API_BASE_URL } from '../config/api';
 import { CreateOrganizationModal } from '../components/CreateOrganizationModal';
 import { formatDateIST } from '../utils/timezone';
-import { colors } from '../config/colors';
 import './Platform.css';
 
 interface Organization {
@@ -22,7 +21,7 @@ export function Platform() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const safetyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const safetyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (user?.role !== 'SUPER_ADMIN') {
@@ -39,7 +38,7 @@ export function Platform() {
     // Safety timeout: if loading takes more than 8 seconds, show error
     // This will be cleared when fetchOrganizations completes
     safetyTimeoutRef.current = setTimeout(() => {
-      setError('Request is taking too long. The backend server may not be running. Please check http://localhost:5000');
+      setError(`Request is taking too long. The backend server may not be running. Please check ${API_BASE_URL}`);
       setLoading(false);
     }, 8000); // 8 second safety timeout
 
@@ -153,7 +152,7 @@ export function Platform() {
           <div className="platform-loading" style={{ gridColumn: '1 / -1' }}>
             <div>Loading organizations...</div>
             <div style={{ fontSize: '14px', color: '#64748b', marginTop: '8px' }}>
-              If this takes too long, the backend server may not be running on http://localhost:5000
+              If this takes too long, the backend server may not be running on {API_BASE_URL}
             </div>
           </div>
         ) : organizations.length === 0 ? (

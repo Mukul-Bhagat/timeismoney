@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../config/api';
-import { useAuth } from '../context/AuthContext';
 import type {
   ProjectSetupData,
   ProjectRoleAllocation,
-  ProjectWeeklyHours,
   Role,
   User,
   MarginStatus,
@@ -13,15 +11,9 @@ import type {
 import './Page.css';
 import './ProjectSetup.css';
 
-interface WeekHourEntry {
-  week_number: number;
-  hours: number;
-}
-
 export function ProjectSetup() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   // State
   const [setupData, setSetupData] = useState<ProjectSetupData | null>(null);
@@ -36,7 +28,6 @@ export function ProjectSetup() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<string>('');
-  const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
 
   // Fetch initial data
   useEffect(() => {
@@ -87,23 +78,17 @@ export function ProjectSetup() {
 
   // Filter users by role
   const filterUsersByRole = useCallback(
-    (roleId: string) => {
-      if (!roleId) {
-        setFilteredUsers([]);
-        return;
-      }
-
-      // Get users who have this role
-      // This is a simplified version - in production, you'd want to filter by user_roles table
-      setFilteredUsers(users);
+    (_roleId: string) => {
+      // This function is kept for compatibility but doesn't need to do anything
+      // since users are fetched per role in the actual implementation
     },
-    [users]
+    []
   );
 
   // Calculate totals for a single allocation
   const calculateAllocationTotals = (allocation: ProjectRoleAllocation): { totalHours: number; totalAmount: number } => {
     const weeklyHours = allocation.weekly_hours || [];
-    const totalHours = weeklyHours.reduce((sum, week) => sum + (week.hours || 0), 0);
+    const totalHours = weeklyHours.reduce((sum: number, week: any) => sum + (week.hours || 0), 0);
     const totalAmount = totalHours * (allocation.hourly_rate || 0);
     
     return {
@@ -196,12 +181,12 @@ export function ProjectSetup() {
       if (alloc.id !== allocationId) return alloc;
 
       const weeklyHours = alloc.weekly_hours || [];
-      const existingWeek = weeklyHours.find(w => w.week_number === weekNumber);
+      const existingWeek = weeklyHours.find((w: any) => w.week_number === weekNumber);
 
       if (existingWeek) {
         return {
           ...alloc,
-          weekly_hours: weeklyHours.map(w =>
+          weekly_hours: weeklyHours.map((w: any) =>
             w.week_number === weekNumber ? { ...w, hours } : w
           ),
         };
@@ -230,12 +215,12 @@ export function ProjectSetup() {
       if (!alloc) return;
 
       const weeklyHours = alloc.weekly_hours || [];
-      const updatedWeeks = weeklyHours.map(w =>
+      const updatedWeeks = weeklyHours.map((w: any) =>
         w.week_number === weekNumber ? { week_number: weekNumber, hours } : { week_number: w.week_number, hours: w.hours }
       );
 
       // Add the new week if it doesn't exist
-      if (!weeklyHours.find(w => w.week_number === weekNumber)) {
+      if (!weeklyHours.find((w: any) => w.week_number === weekNumber)) {
         updatedWeeks.push({ week_number: weekNumber, hours });
       }
 
@@ -418,7 +403,7 @@ export function ProjectSetup() {
                         </select>
                       </td>
                       {weekNumbers.map(weekNum => {
-                        const weekData = weeklyHours.find(w => w.week_number === weekNum);
+                        const weekData = weeklyHours.find((w: any) => w.week_number === weekNum);
                         const hours = weekData?.hours || 0;
 
                         return (

@@ -1,10 +1,10 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../config/supabase';
 import './Profile.css';
 
 export function Profile() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -15,11 +15,11 @@ export function Profile() {
   // Fetch organization name
   useEffect(() => {
     const fetchOrgName = async () => {
-      if (profile?.organization_id) {
+      if (user?.organizationId) {
         const { data } = await supabase
           .from('organizations')
           .select('name')
-          .eq('id', profile.organization_id)
+          .eq('id', user.organizationId)
           .single();
         if (data) {
           setOrganizationName(data.name);
@@ -29,7 +29,7 @@ export function Profile() {
       }
     };
     fetchOrgName();
-  }, [profile?.organization_id]);
+  }, [user?.organizationId]);
 
   const handleChangePassword = async (e: FormEvent) => {
     e.preventDefault();
@@ -74,11 +74,11 @@ export function Profile() {
         <div className="profile-info">
           <div className="profile-info-item">
             <label>Email</label>
-            <div className="profile-info-value">{profile?.email || 'N/A'}</div>
+            <div className="profile-info-value">{user?.email || 'N/A'}</div>
           </div>
           <div className="profile-info-item">
             <label>Role</label>
-            <div className="profile-info-value">{profile?.role || 'N/A'}</div>
+            <div className="profile-info-value">{user?.role || 'N/A'}</div>
           </div>
           <div className="profile-info-item">
             <label>Organization</label>

@@ -27,6 +27,7 @@ export interface User {
   created_at: string;
   roles?: string[];
   status?: string;
+  rate_per_hour?: number | null;
 }
 
 // Project status type

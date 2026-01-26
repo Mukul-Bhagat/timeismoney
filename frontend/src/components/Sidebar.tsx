@@ -1,7 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getPagesForRole } from '../config/routes';
-import { colors } from '../config/colors';
 import './Sidebar.css';
 
 export function Sidebar() {

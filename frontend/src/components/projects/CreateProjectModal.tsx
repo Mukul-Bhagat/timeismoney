@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { colors } from '../../config/colors';
 import './Projects.css';
 import '../roles/Roles.css';
 
@@ -10,7 +9,7 @@ interface CreateProjectModalProps {
   onSuccess: () => void;
 }
 
-export function CreateProjectModal({ isOpen, onClose, onSuccess }: CreateProjectModalProps) {
+export function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps) {
   const navigate = useNavigate();
 
   useEffect(() => {

@@ -1,12 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../config/api';
-import { useAuth } from '../../context/AuthContext';
 import { useCurrency } from '../../context/CurrencyContext';
 import { ConfirmModal } from '../common/ConfirmModal';
 import type {
   ProjectSetupData,
-  ProjectRoleAllocation,
-  ProjectWeeklyHours,
   Role,
   User,
   MarginStatus,
@@ -29,15 +26,12 @@ interface ProjectPlanningSectionProps {
 }
 
 export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningSectionProps) {
-  const { user } = useAuth();
   const { symbol, formatAmount } = useCurrency();
 
   // State
   const [setupData, setSetupData] = useState<ProjectSetupData | null>(null);
   const [planningRows, setPlanningRows] = useState<PlanningRow[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
-  const [customerRate, setCustomerRate] = useState<number>(0);
   const [soldCostPercentage, setSoldCostPercentage] = useState<number>(11);
   
   // UI State
@@ -46,7 +40,6 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<Record<string, string[]>>({});
   const [selectedRole, setSelectedRole] = useState<string>('');
-  const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
   const [usersByRole, setUsersByRole] = useState<Record<string, User[]>>({});
   const [loadingUsersForRole, setLoadingUsersForRole] = useState<Record<string, boolean>>({});
   const fetchingRef = useRef<Set<string>>(new Set());
@@ -100,7 +93,6 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
     if (projectId) {
       fetchProjectSetup();
       fetchRoles();
-      fetchUsers();
     }
   }, [projectId]);
 
@@ -146,12 +138,11 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
           userId: alloc.user_id || null,
           weeklyHours: weeklyHoursArray,
           rate: alloc.hourly_rate || 0,
-          customerRate: alloc.customer_rate_per_hour || data.setup.customer_rate_per_hour || 0,
+          customerRate: (alloc as any).customer_rate_per_hour || data.setup.customer_rate_per_hour || 0,
         };
       });
       
       setPlanningRows(rows);
-      setCustomerRate(data.setup.customer_rate_per_hour || 0);
       setSoldCostPercentage(data.setup.sold_cost_percentage || 11);
     } catch (err: any) {
       console.error('Error fetching project setup:', err);
@@ -170,19 +161,10 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
     }
   };
 
-  const fetchUsers = async () => {
-    try {
-      const response = await api.get('/api/users');
-      setUsers(response.data.users || []);
-    } catch (err) {
-      console.error('Error fetching users:', err);
-    }
-  };
 
   // Filter users by role (for "Add Row" dropdown - not really needed since rows filter their own users)
   const filterUsersByRole = (roleId: string) => {
     if (!roleId) {
-      setFilteredUsers([]);
       return;
     }
     // Just fetch users for this role - the filteredUsers state is not really used anymore
@@ -317,9 +299,9 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
       
       if (user?.rate_per_hour) {
         setPlanningRows(prev => prev.map(r => {
-          const id = r.id || r.tempId;
-          const rowId = row.id || row.tempId;
-          if (id === rowId) {
+          const id = r.id || r.tempId || '';
+          const rowId = row.id || row.tempId || '';
+          if (id && rowId && id === rowId) {
             return { ...r, rate: user.rate_per_hour };
           }
           return r;
@@ -333,9 +315,9 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
       
       if (role?.default_rate_per_hour) {
         setPlanningRows(prev => prev.map(r => {
-          const id = r.id || r.tempId;
-          const rowId = row.id || row.tempId;
-          if (id === rowId) {
+          const id = r.id || r.tempId || '';
+          const rowId = row.id || row.tempId || '';
+          if (id && rowId && id === rowId) {
             return { ...r, rate: role.default_rate_per_hour };
           }
           return r;
@@ -506,7 +488,9 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
           if (rowIndex >= 0 && rowIndex < planningRows.length) {
             const row = planningRows[rowIndex];
             const rowId = row.id || row.tempId;
-            errors[rowId] = err.errors;
+            if (rowId) {
+              errors[rowId] = err.errors;
+            }
           }
         });
         setValidationErrors(errors);
@@ -534,8 +518,10 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
           const rowIndex = validationErr.row_index - 1;
           if (rowIndex >= 0 && rowIndex < planningRows.length) {
             const row = planningRows[rowIndex];
-            const rowId = row.id || row.tempId;
-            errors[rowId] = validationErr.errors;
+            const rowId = row.id || row.tempId || '';
+            if (rowId) {
+              errors[rowId] = validationErr.errors;
+            }
           }
         });
         setValidationErrors(errors);
@@ -669,7 +655,7 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
                 </tr>
               ) : (
                 planningRows.map(row => {
-                  const rowId = row.id || row.tempId;
+                  const rowId = row.id || row.tempId || '';
                   const { totalHours, totalAmount, customerAmount } = calculateRowTotals(row);
                   const rowErrors = validationErrors[rowId] || [];
 
@@ -679,7 +665,7 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
                         <select
                           className="project-setup-select"
                           value={row.roleId || ''}
-                          onChange={(e) => handleUpdateAllocation(rowId, 'roleId', e.target.value)}
+                          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => handleUpdateAllocation(rowId, 'roleId', e.target.value)}
                         >
                           <option value="">Select Role</option>
                           {roles.map(role => (
@@ -696,7 +682,7 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
                         <select
                           className="project-setup-select"
                           value={row.userId || ''}
-                          onChange={(e) => handleUpdateAllocation(rowId, 'userId', e.target.value)}
+                          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => handleUpdateAllocation(rowId, 'userId', e.target.value)}
                           disabled={!row.roleId}
                         >
                           <option value="">
@@ -732,7 +718,7 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
                               max="168"
                               step="0.5"
                               placeholder="0"
-                              onChange={(e) => handleUpdateWeekHours(
+                              onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleUpdateWeekHours(
                                 rowId,
                                 weekNum,
                                 parseFloat(e.target.value) || 0
@@ -752,7 +738,7 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
                           min="0"
                           step="0.01"
                           placeholder="0.00"
-                          onChange={(e) => handleUpdateAllocation(
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleUpdateAllocation(
                             rowId,
                             'rate',
                             parseFloat(e.target.value) || 0
@@ -775,7 +761,7 @@ export function ProjectPlanningSection({ projectId, onUpdate }: ProjectPlanningS
                           min="0"
                           step="0.01"
                           placeholder="0.00"
-                          onChange={(e) => handleUpdateAllocation(
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleUpdateAllocation(
                             rowId,
                             'customerRate',
                             parseFloat(e.target.value) || 0
