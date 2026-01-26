@@ -45,7 +45,12 @@ export function CreateOrganizationModal({
       setTimezone('Asia/Kolkata');
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to create organization');
+      // Extract error message from backend response
+      const errorMessage = err.response?.data?.message 
+        || err.response?.data?.error 
+        || err.message 
+        || 'Failed to create organization';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
