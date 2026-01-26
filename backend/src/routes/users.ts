@@ -531,6 +531,7 @@ router.get(
           phone,
           timezone,
           organization_id,
+          rate_per_hour,
           created_at,
           user_roles:user_roles (
             roles:role_id (
@@ -557,6 +558,7 @@ router.get(
           phone: user.phone || null,
           timezone: user.timezone,
           organization_id: user.organization_id,
+          rate_per_hour: user.rate_per_hour,
           created_at: user.created_at,
           roles,
           status: 'Active', // All users in the list are active (they exist in auth)
@@ -576,6 +578,158 @@ router.get(
     }
   }
 );
+
+/**
+ * GET /api/users/managers
+ * Get all users with MANAGER role for PM selection
+ */
+router.get('/managers', verifyAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    // Get organization ID
+    const isSuper = await isSuperAdmin(req.user.id);
+    let organizationId: string;
+    
+    if (isSuper) {
+      organizationId = (req.query.organization_id as string) || req.user.organization_id || '';
+      if (!organizationId) {
+        return res.status(400).json({
+          success: false,
+          message: 'organization_id required for SUPER_ADMIN',
+        });
+      }
+    } else {
+      organizationId = req.user.organization_id || '';
+    }
+
+    // Get MANAGER role for organization
+    const { data: managerRole, error: roleError } = await supabase
+      .from('roles')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('name', 'MANAGER')
+      .eq('is_system', true)
+      .single();
+
+    if (roleError || !managerRole) {
+      // No MANAGER role exists, return empty array
+      return res.json({
+        success: true,
+        managers: [],
+      });
+    }
+
+    // Get users with MANAGER role
+    const { data: userRoles, error: userRolesError } = await supabase
+      .from('user_roles')
+      .select('user_id, users:user_id(id, email)')
+      .eq('role_id', managerRole.id);
+
+    if (userRolesError) {
+      throw userRolesError;
+    }
+
+    const managers = userRoles?.map((ur: any) => ur.users).filter(Boolean) || [];
+
+    res.json({
+      success: true,
+      managers,
+    });
+  } catch (error: any) {
+    console.error('Error fetching managers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch managers',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * PUT /api/users/:id/rate
+ * Update hourly rate for a user
+ */
+router.put('/:id/rate', verifyAuth, requireRole('SUPER_ADMIN', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const { id } = req.params;
+    const { rate_per_hour } = req.body;
+
+    // Validate input
+    if (rate_per_hour !== undefined && (rate_per_hour < 0 || isNaN(rate_per_hour))) {
+      return res.status(400).json({
+        success: false,
+        message: 'rate_per_hour must be a non-negative number',
+      });
+    }
+
+    // Fetch user
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, email, organization_id')
+      .eq('id', id)
+      .single();
+
+    if (userError || !user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Check permissions: SUPER_ADMIN or ADMIN of same organization
+    const isSuper = await isSuperAdmin(req.user.id);
+    if (!isSuper && req.user.organization_id !== user.organization_id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Insufficient permissions',
+      });
+    }
+
+    // Update rate (allow null to clear)
+    const updateData: any = {};
+    if (rate_per_hour === null || rate_per_hour === undefined) {
+      updateData.rate_per_hour = null;
+    } else {
+      updateData.rate_per_hour = Number(rate_per_hour);
+    }
+
+    const { data: updatedUser, error: updateError } = await supabase
+      .from('users')
+      .update(updateData)
+      .eq('id', id)
+      .select('id, email, rate_per_hour')
+      .single();
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    res.json({
+      success: true,
+      message: 'User rate updated successfully',
+      user: updatedUser,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update user rate',
+      error: error.message,
+    });
+  }
+});
 
 export default router;
 

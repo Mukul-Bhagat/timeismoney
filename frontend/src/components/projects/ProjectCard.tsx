@@ -71,19 +71,40 @@ export function ProjectCard({ project, onClick }: ProjectCardProps) {
           >
             {project.status === 'active' ? 'Active' : 'Completed'}
           </div>
-          <div
-            style={{
-              padding: '4px 8px',
-              borderRadius: '4px',
-              fontSize: '12px',
-              fontWeight: '500',
-              background: project.setup_status === 'setup_done' ? '#d1fae5' : '#fef3c7',
-              color: project.setup_status === 'setup_done' ? '#065f46' : '#92400e',
-            }}
-            title={project.setup_status === 'setup_done' ? 'Cost planning is complete' : 'Cost planning pending'}
-          >
-            {project.setup_status === 'setup_done' ? '🟢 Ready' : '🟡 Draft'}
-          </div>
+          
+          {/* Project Type Badge */}
+          {project.project_type && (
+            <div
+              style={{
+                padding: '4px 8px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                fontWeight: '500',
+                background: project.project_type === 'simple' ? '#dbeafe' : '#fce7f3',
+                color: project.project_type === 'simple' ? '#1e40af' : '#9f1239',
+              }}
+              title={project.project_type === 'simple' ? 'Simple Daily Working Project' : 'Planned / Cost-Based Project'}
+            >
+              {project.project_type === 'simple' ? '⚡ Simple' : '📊 Planned'}
+            </div>
+          )}
+          
+          {/* Setup Status Badge (only for Type B projects) */}
+          {project.project_type === 'planned' && (
+            <div
+              style={{
+                padding: '4px 8px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                fontWeight: '500',
+                background: project.setup_status === 'ready' ? '#d1fae5' : '#fef3c7',
+                color: project.setup_status === 'ready' ? '#065f46' : '#92400e',
+              }}
+              title={project.setup_status === 'ready' ? 'Cost planning is complete' : 'Cost planning pending'}
+            >
+              {project.setup_status === 'ready' ? '🟢 Ready' : '🟡 Draft'}
+            </div>
+          )}
         </div>
         <div
           style={{

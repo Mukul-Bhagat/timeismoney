@@ -10,6 +10,7 @@ interface Role {
   name: string;
   is_system: boolean;
   user_count: number;
+  default_rate_per_hour?: number | null;
   created_at: string;
 }
 
@@ -44,13 +45,60 @@ export function RoleDetailsModal({
   const [loading, setLoading] = useState(false);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [defaultRate, setDefaultRate] = useState<number | null>(null);
+  const [savingRate, setSavingRate] = useState(false);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
 
   useEffect(() => {
     if (isOpen && role) {
       fetchUsers();
       fetchAvailableUsers();
+      fetchRoleDetails();
+      fetchAllUsers();
     }
   }, [isOpen, role]);
+  
+  const fetchRoleDetails = async () => {
+    if (!role) return;
+    
+    try {
+      const response = await api.get(`/api/roles/${role.id}`);
+      if (response.data.success) {
+        setDefaultRate(response.data.role.default_rate_per_hour || null);
+      }
+    } catch (err) {
+      console.error('Error fetching role details:', err);
+    }
+  };
+  
+  const fetchAllUsers = async () => {
+    try {
+      const response = await api.get('/api/users');
+      if (response.data.success) {
+        setAllUsers(response.data.users || []);
+      }
+    } catch (err) {
+      console.error('Error fetching all users:', err);
+    }
+  };
+  
+  const handleSaveDefaultRate = async () => {
+    if (!role) return;
+    
+    setSavingRate(true);
+    try {
+      await api.put(`/api/roles/${role.id}/rate`, {
+        default_rate_per_hour: defaultRate || null,
+      });
+      alert('Default rate saved successfully!');
+      onUpdate();
+    } catch (err: any) {
+      console.error('Error saving rate:', err);
+      alert(err.response?.data?.message || 'Failed to save rate');
+    } finally {
+      setSavingRate(false);
+    }
+  };
 
   const fetchUsers = async () => {
     if (!role) return;
@@ -205,6 +253,49 @@ export function RoleDetailsModal({
           </div>
         )}
 
+        {/* Default Rate Section */}
+        <div style={{ padding: '16px', borderBottom: `1px solid ${colors.border}` }}>
+          <h3 style={{ margin: '0 0 12px 0', color: colors.text.primary, fontSize: '16px' }}>
+            Default Hourly Rate
+          </h3>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={defaultRate || ''}
+              onChange={(e) => setDefaultRate(e.target.value ? parseFloat(e.target.value) : null)}
+              placeholder="Enter default rate"
+              style={{
+                padding: '8px 12px',
+                border: `1px solid ${colors.border}`,
+                borderRadius: '4px',
+                fontSize: '14px',
+                width: '200px',
+              }}
+            />
+            <button
+              onClick={handleSaveDefaultRate}
+              disabled={savingRate}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: '4px',
+                background: savingRate ? colors.border : colors.primary.main,
+                color: colors.white,
+                cursor: savingRate ? 'not-allowed' : 'pointer',
+                fontSize: '14px',
+                fontWeight: '500',
+              }}
+            >
+              {savingRate ? 'Saving...' : 'Save Rate'}
+            </button>
+          </div>
+          <div style={{ fontSize: '12px', color: colors.text.secondary, marginTop: '8px' }}>
+            Used if employee rate is not defined
+          </div>
+        </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', padding: '16px' }}>
           {/* Section A: Users in this role */}
           <div>
@@ -220,11 +311,18 @@ export function RoleDetailsModal({
               }}
             >
               <RoleUserList
-                users={users}
+                users={users.map(u => {
+                  const fullUser = allUsers.find((au: any) => au.id === u.id);
+                  return {
+                    ...u,
+                    rate_per_hour: fullUser?.rate_per_hour || null,
+                  };
+                })}
                 onRemoveUser={handleRemoveUser}
                 removingUserId={removingUserId}
                 roleName={role.name}
                 isSystemRole={role.is_system}
+                defaultRate={defaultRate}
               />
             </div>
           </div>

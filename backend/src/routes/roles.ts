@@ -108,7 +108,7 @@ router.get('/', verifyAuth, async (req: AuthRequest, res: Response) => {
     // Fetch roles with user counts
     const { data: roles, error: rolesError } = await supabase
       .from('roles')
-      .select('id, name, is_system, created_at')
+      .select('id, name, is_system, default_rate_per_hour, created_at')
       .eq('organization_id', organizationId)
       .order('is_system', { ascending: false })
       .order('name', { ascending: true });
@@ -133,6 +133,7 @@ router.get('/', verifyAuth, async (req: AuthRequest, res: Response) => {
           id: role.id,
           name: role.name,
           is_system: role.is_system,
+          default_rate_per_hour: role.default_rate_per_hour,
           user_count: count || 0,
           created_at: role.created_at,
         };
@@ -273,7 +274,7 @@ router.get('/:id', verifyAuth, async (req: AuthRequest, res: Response) => {
     // Fetch role
     const { data: role, error: roleError } = await supabase
       .from('roles')
-      .select('id, name, is_system, organization_id, created_at')
+      .select('id, name, is_system, organization_id, default_rate_per_hour, created_at')
       .eq('id', id)
       .single();
 
@@ -310,6 +311,7 @@ router.get('/:id', verifyAuth, async (req: AuthRequest, res: Response) => {
         name: role.name,
         is_system: role.is_system,
         organization_id: role.organization_id,
+        default_rate_per_hour: role.default_rate_per_hour,
         user_count: count || 0,
         created_at: role.created_at,
       },
@@ -660,6 +662,86 @@ router.delete('/:id/users/:userId', verifyAuth, async (req: AuthRequest, res: Re
     res.status(500).json({
       success: false,
       message: 'Failed to remove user from role',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * PUT /api/roles/:id/rate
+ * Update default hourly rate for a role
+ */
+router.put('/:id/rate', verifyAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const { id } = req.params;
+    const { default_rate_per_hour } = req.body;
+
+    // Validate input
+    if (default_rate_per_hour !== undefined && (default_rate_per_hour < 0 || isNaN(default_rate_per_hour))) {
+      return res.status(400).json({
+        success: false,
+        message: 'default_rate_per_hour must be a non-negative number',
+      });
+    }
+
+    // Fetch role
+    const { data: role, error: roleError } = await supabase
+      .from('roles')
+      .select('id, name, organization_id')
+      .eq('id', id)
+      .single();
+
+    if (roleError || !role) {
+      return res.status(404).json({
+        success: false,
+        message: 'Role not found',
+      });
+    }
+
+    // Check permissions
+    const isSuper = await isSuperAdmin(req.user.id);
+    if (!isSuper && !(await canManageOrganization(req.user.id, role.organization_id))) {
+      return res.status(403).json({
+        success: false,
+        message: 'Insufficient permissions',
+      });
+    }
+
+    // Update rate (allow null to clear)
+    const updateData: any = {};
+    if (default_rate_per_hour === null || default_rate_per_hour === undefined) {
+      updateData.default_rate_per_hour = null;
+    } else {
+      updateData.default_rate_per_hour = Number(default_rate_per_hour);
+    }
+
+    const { data: updatedRole, error: updateError } = await supabase
+      .from('roles')
+      .update(updateData)
+      .eq('id', id)
+      .select('id, name, default_rate_per_hour')
+      .single();
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    res.json({
+      success: true,
+      message: 'Role rate updated successfully',
+      role: updatedRole,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update role rate',
       error: error.message,
     });
   }

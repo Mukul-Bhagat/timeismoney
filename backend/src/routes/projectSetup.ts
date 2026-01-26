@@ -96,10 +96,14 @@ router.get('/:projectId', verifyAuth, async (req: AuthRequest, res: Response) =>
       });
     }
 
-    // Get project
+    // Get project with organization currency
     const { data: project, error: projectError } = await supabase
       .from('projects')
-      .select('*, project_manager:project_manager_id(id, email)')
+      .select(`
+        *,
+        project_manager:project_manager_id(id, email),
+        organization:organization_id(id, currency_code, currency_symbol)
+      `)
       .eq('id', projectId)
       .single();
 
@@ -117,7 +121,7 @@ router.get('/:projectId', verifyAuth, async (req: AuthRequest, res: Response) =>
       .eq('project_id', projectId)
       .single();
 
-    // If setup doesn't exist, create it
+    // If setup doesn't exist, create it automatically
     if (setupError && setupError.code === 'PGRST116') {
       const totalWeeks = calculateWeeks(project.start_date, project.end_date);
       
@@ -126,6 +130,14 @@ router.get('/:projectId', verifyAuth, async (req: AuthRequest, res: Response) =>
         .insert({
           project_id: projectId,
           total_weeks: totalWeeks,
+          total_internal_hours: 0,
+          total_internal_cost: 0,
+          customer_rate_per_hour: 0,
+          total_customer_amount: 0,
+          gross_margin_percentage: 0,
+          sold_cost_percentage: 11.00,
+          current_margin_percentage: 0,
+          margin_status: 'red',
         })
         .select()
         .single();
@@ -135,6 +147,7 @@ router.get('/:projectId', verifyAuth, async (req: AuthRequest, res: Response) =>
       }
 
       setup = newSetup;
+      console.log('Auto-created project_setups record for project:', projectId);
     } else if (setupError) {
       throw setupError;
     }
@@ -166,6 +179,12 @@ router.get('/:projectId', verifyAuth, async (req: AuthRequest, res: Response) =>
       throw phasesError;
     }
 
+    // Extract currency from organization
+    const currency = {
+      code: (project as any).organization?.currency_code || 'INR',
+      symbol: (project as any).organization?.currency_symbol || '₹',
+    };
+
     res.json({
       success: true,
       data: {
@@ -173,6 +192,7 @@ router.get('/:projectId', verifyAuth, async (req: AuthRequest, res: Response) =>
         setup,
         allocations: allocations || [],
         phases: phases || [],
+        currency,
       },
     });
   } catch (error: any) {
@@ -347,6 +367,363 @@ router.put('/:projectId/header', verifyAuth, async (req: AuthRequest, res: Respo
 });
 
 /**
+ * POST /api/project-setup/:projectId/save-draft
+ * Batch save all planning rows (lenient validation - allows empty rows)
+ */
+router.post('/:projectId/save-draft', verifyAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const { projectId } = req.params;
+    const { rows, sold_cost_percentage } = req.body;
+
+    // Check permissions
+    if (!(await canManageProject(req.user.id, projectId))) {
+      return res.status(403).json({
+        success: false,
+        message: 'Insufficient permissions',
+      });
+    }
+
+    // Validate input format
+    if (!Array.isArray(rows)) {
+      return res.status(400).json({
+        success: false,
+        message: 'rows must be an array',
+      });
+    }
+
+    // Get project to verify organization
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('organization_id')
+      .eq('id', projectId)
+      .single();
+
+    if (projectError || !project) {
+      return res.status(404).json({
+        success: false,
+        message: 'Project not found',
+      });
+    }
+
+    // Update header if sold_cost_percentage provided (customer_rate_per_hour is now per-row)
+    if (sold_cost_percentage !== undefined) {
+      if (sold_cost_percentage < 0 || sold_cost_percentage > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'Sold cost percentage must be between 0 and 100',
+        });
+      }
+
+      const { error: headerError } = await supabase
+        .from('project_setups')
+        .update({ sold_cost_percentage })
+        .eq('project_id', projectId);
+
+      if (headerError) {
+        throw headerError;
+      }
+    }
+
+    // Process rows in transaction
+    // Get existing allocations to determine which to update vs create
+    const { data: existingAllocations } = await supabase
+      .from('project_role_allocations')
+      .select('id, row_order')
+      .eq('project_id', projectId);
+
+    const existingIds = new Set((existingAllocations || []).map(a => a.id));
+    const maxOrder = existingAllocations && existingAllocations.length > 0
+      ? Math.max(...existingAllocations.map(a => a.row_order || 0))
+      : 0;
+
+    // Fetch default customer rate from project_setups once (for fallback)
+    const { data: setup } = await supabase
+      .from('project_setups')
+      .select('customer_rate_per_hour')
+      .eq('project_id', projectId)
+      .single();
+    const defaultCustomerRate = setup?.customer_rate_per_hour || 0;
+
+    // Separate rows into updates and creates
+    const toUpdate: any[] = [];
+    const toCreate: any[] = [];
+    let nextOrder = maxOrder + 1;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowId = row.id || row.tempId;
+
+      // Validate row format (lenient - allow nulls)
+      if (typeof rowId !== 'string' && rowId !== undefined) {
+        continue; // Skip invalid rows
+      }
+
+      const weeklyHours = Array.isArray(row.weekly_hours) ? row.weekly_hours : [];
+
+      // Use row's customer_rate_per_hour or fallback to default
+      const customerRate = row.customer_rate_per_hour !== undefined && row.customer_rate_per_hour !== null
+        ? row.customer_rate_per_hour
+        : defaultCustomerRate;
+
+      if (rowId && existingIds.has(rowId)) {
+        // Update existing allocation
+        toUpdate.push({
+          id: rowId,
+          role_id: row.role_id || null,
+          user_id: row.user_id || null,
+          hourly_rate: row.hourly_rate || 0,
+          customer_rate_per_hour: customerRate || 0,
+          weekly_hours: weeklyHours,
+        });
+      } else {
+        // Create new allocation
+        toCreate.push({
+          role_id: row.role_id || null,
+          user_id: row.user_id || null,
+          hourly_rate: row.hourly_rate || 0,
+          customer_rate_per_hour: customerRate || 0,
+          weekly_hours: weeklyHours,
+          row_order: nextOrder++,
+        });
+      }
+    }
+
+    // Delete allocations not in the rows array
+    const rowIds = rows
+      .map(r => r.id || r.tempId)
+      .filter(id => id && existingIds.has(id));
+    
+    if (rowIds.length < existingIds.size) {
+      const idsToDelete = Array.from(existingIds).filter(id => !rowIds.includes(id));
+      if (idsToDelete.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('project_role_allocations')
+          .delete()
+          .eq('project_id', projectId)
+          .in('id', idsToDelete);
+
+        if (deleteError) {
+          throw deleteError;
+        }
+      }
+    }
+
+    // Create new allocations
+    if (toCreate.length > 0) {
+      // Build insert object
+      const allocationsToInsert = toCreate.map(c => ({
+        project_id: projectId,
+        role_id: c.role_id,
+        user_id: c.user_id,
+        hourly_rate: c.hourly_rate,
+        customer_rate_per_hour: c.customer_rate_per_hour || 0,
+        row_order: c.row_order,
+      }));
+
+      const { data: newAllocations, error: createError } = await supabase
+        .from('project_role_allocations')
+        .insert(allocationsToInsert)
+        .select('id, row_order');
+
+      if (createError) {
+        // Check if error is about missing column (migration not run)
+        if (createError.message && (
+          createError.message.includes('customer_rate_per_hour') ||
+          (createError.message.includes('column') && createError.message.includes('does not exist'))
+        )) {
+          throw new Error('Database migration not run. Please run migration_add_customer_rate_per_row.sql in Supabase SQL Editor first. See MIGRATION_INSTRUCTIONS.md for details.');
+        }
+        throw createError;
+      }
+
+      // Add weekly hours for new allocations
+      for (let i = 0; i < newAllocations.length; i++) {
+        const allocation = newAllocations[i];
+        const weeklyHours = toCreate[i].weekly_hours;
+        
+        if (weeklyHours && weeklyHours.length > 0) {
+          const hoursToInsert = weeklyHours
+            .filter((wh: any) => wh.week_number && wh.hours > 0)
+            .map((wh: any) => ({
+              allocation_id: allocation.id,
+              week_number: wh.week_number,
+              hours: wh.hours,
+            }));
+
+          if (hoursToInsert.length > 0) {
+            const { error: hoursError } = await supabase
+              .from('project_weekly_hours')
+              .insert(hoursToInsert);
+
+            if (hoursError) {
+              console.error('Error inserting weekly hours:', hoursError);
+            }
+          }
+        }
+      }
+    }
+
+    // Update existing allocations
+    for (const update of toUpdate) {
+      // Build update object
+      const updateData: any = {
+        role_id: update.role_id,
+        user_id: update.user_id,
+        hourly_rate: update.hourly_rate,
+        customer_rate_per_hour: update.customer_rate_per_hour || 0,
+      };
+
+      const { error: updateError } = await supabase
+        .from('project_role_allocations')
+        .update(updateData)
+        .eq('id', update.id)
+        .eq('project_id', projectId);
+
+      if (updateError) {
+        // Check if error is about missing column (migration not run)
+        if (updateError.message && (
+          updateError.message.includes('customer_rate_per_hour') ||
+          updateError.message.includes('column') && updateError.message.includes('does not exist')
+        )) {
+          throw new Error('Database migration not run. Please run migration_add_customer_rate_per_row.sql in Supabase SQL Editor first. See MIGRATION_INSTRUCTIONS.md for details.');
+        }
+        throw updateError;
+      }
+
+      // Update weekly hours
+      if (update.weekly_hours && update.weekly_hours.length > 0) {
+        // Delete existing hours
+        await supabase
+          .from('project_weekly_hours')
+          .delete()
+          .eq('allocation_id', update.id);
+
+        // Insert new hours
+        const hoursToInsert = update.weekly_hours
+          .filter((wh: any) => wh.week_number && wh.hours > 0)
+          .map((wh: any) => ({
+            allocation_id: update.id,
+            week_number: wh.week_number,
+            hours: wh.hours,
+          }));
+
+        if (hoursToInsert.length > 0) {
+          const { error: hoursError } = await supabase
+            .from('project_weekly_hours')
+            .insert(hoursToInsert);
+
+          if (hoursError) {
+            console.error('Error updating weekly hours:', hoursError);
+          }
+        }
+      }
+    }
+
+    // Recalculate all totals with error handling
+    for (const update of toUpdate) {
+      try {
+        // Only recalculate if the allocation has a user/role/rate and some hours
+        const hasData = update.role_id && update.user_id && update.hourly_rate > 0 && 
+                       update.weekly_hours && update.weekly_hours.length > 0;
+        
+        if (hasData) {
+          const result = await updateAllocationTotals(update.id);
+          if (!result) {
+            console.warn(`Failed to update totals for allocation ${update.id} in project ${projectId}`);
+          }
+        } else {
+          // If no data, set totals to 0
+          await supabase.from('project_role_allocations').update({ total_hours: 0, total_amount: 0 }).eq('id', update.id);
+        }
+      } catch (error: any) {
+        console.error(`Error recalculating totals for allocation ${update.id} in project ${projectId}:`, error.message, error.stack);
+        // Continue processing other allocations even if one fails
+      }
+    }
+    
+    // Recalculate totals for newly created allocations using the IDs from insert
+    if (toCreate.length > 0 && newAllocations && newAllocations.length > 0) {
+      for (const alloc of newAllocations) {
+        try {
+          // Only recalculate if the allocation has a user/role/rate and some hours
+          const createIndex = newAllocations.findIndex(a => a.id === alloc.id);
+          if (createIndex >= 0 && createIndex < toCreate.length) {
+            const createData = toCreate[createIndex];
+            const hasData = createData.role_id && createData.user_id && createData.hourly_rate > 0 && 
+                           createData.weekly_hours && createData.weekly_hours.length > 0;
+            
+            if (hasData) {
+              const result = await updateAllocationTotals(alloc.id);
+              if (!result) {
+                console.warn(`Failed to update totals for new allocation ${alloc.id} in project ${projectId}`);
+              }
+            } else {
+              // If no data, set totals to 0
+              await supabase.from('project_role_allocations').update({ total_hours: 0, total_amount: 0 }).eq('id', alloc.id);
+            }
+          }
+        } catch (error: any) {
+          console.error(`Error recalculating totals for new allocation ${alloc.id} in project ${projectId}:`, error.message, error.stack);
+          // Continue processing other allocations even if one fails
+        }
+      }
+    }
+
+    // Update project totals with error handling
+    try {
+      const result = await updateProjectSetupTotals(projectId);
+      if (!result) {
+        console.warn(`Failed to update project totals for project ${projectId}`);
+      }
+    } catch (error: any) {
+      console.error(`Error updating project totals for project ${projectId}:`, error);
+      // Don't fail the entire save operation if totals update fails
+    }
+
+    // Always set status to draft on save (even if previously 'ready')
+    // This ensures any changes after finalization revert to draft
+    const { error: statusError } = await supabase
+      .from('projects')
+      .update({ setup_status: 'draft' })
+      .eq('id', projectId);
+
+    if (statusError) {
+      console.error(`Error updating project status to draft for project ${projectId}:`, statusError);
+      // Don't fail the entire save operation if status update fails
+    }
+
+    res.json({
+      success: true,
+      message: 'Draft saved successfully',
+    });
+  } catch (error: any) {
+    console.error(`Error saving draft for project ${projectId}:`, {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to save draft',
+      error: error.message || 'Unknown error occurred',
+      ...(process.env.NODE_ENV === 'development' && {
+        details: error.details,
+        hint: error.hint,
+      }),
+    });
+  }
+});
+
+/**
  * POST /api/project-setup/:projectId/allocations
  * Add a new role+user row
  */
@@ -370,13 +747,8 @@ router.post('/:projectId/allocations', verifyAuth, async (req: AuthRequest, res:
       });
     }
 
-    // Validate required fields
-    if (!role_id || !user_id) {
-      return res.status(400).json({
-        success: false,
-        message: 'Role and user are required',
-      });
-    }
+    // Allow null role_id and user_id for draft allocations
+    // Validation will happen on finalize
 
     // Get project to verify organization
     const { data: project, error: projectError } = await supabase
@@ -404,20 +776,22 @@ router.post('/:projectId/allocations', verifyAuth, async (req: AuthRequest, res:
     const nextOrder = (maxOrder?.row_order || 0) + 1;
 
     // Determine hourly rate (use provided or fetch default)
-    let finalRate = hourly_rate;
-    if (!finalRate || finalRate === 0) {
+    let finalRate = hourly_rate || 0;
+    
+    // Only fetch default rate if role and user are provided
+    if ((!finalRate || finalRate === 0) && user_id && role_id) {
       const defaultRate = await getDefaultHourlyRate(user_id, role_id, project.organization_id);
       finalRate = defaultRate || 0;
     }
 
-    // Create allocation
+    // Create allocation (allow null role_id and user_id for draft)
     const { data: allocation, error: allocError } = await supabase
       .from('project_role_allocations')
       .insert({
         project_id: projectId,
-        role_id,
-        user_id,
-        hourly_rate: finalRate,
+        role_id: role_id || null,  // Explicitly allow null
+        user_id: user_id || null,  // Explicitly allow null
+        hourly_rate: finalRate || 0,
         row_order: nextOrder,
       })
       .select(`
@@ -435,6 +809,12 @@ router.post('/:projectId/allocations', verifyAuth, async (req: AuthRequest, res:
         });
       }
       throw allocError;
+    }
+
+    // Handle null relationships gracefully for empty rows
+    if (allocation) {
+      allocation.user = allocation.user || null;
+      allocation.role = allocation.role || null;
     }
 
     res.status(201).json({
@@ -716,7 +1096,7 @@ router.post('/:projectId/finalize', verifyAuth, async (req: AuthRequest, res: Re
     // Update project setup_status
     const { error: updateError } = await supabase
       .from('projects')
-      .update({ setup_status: 'setup_done' })
+      .update({ setup_status: 'ready' })
       .eq('id', projectId);
 
     if (updateError) {
@@ -877,6 +1257,22 @@ router.get('/:projectId/reports/planned-vs-actual', verifyAuth, async (req: Auth
       });
     }
 
+    // Check if project is finalized
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('setup_status')
+      .eq('id', projectId)
+      .single();
+
+    // If project not finalized, return empty data
+    if (projectError || !project || project.setup_status !== 'ready') {
+      return res.json({
+        success: true,
+        data: [],
+        message: 'Planning not finalized. Complete planning to view reports.',
+      });
+    }
+
     // Get planned hours from project_weekly_hours
     const { data: plannedData, error: plannedError } = await supabase
       .from('project_weekly_hours')
@@ -892,8 +1288,14 @@ router.get('/:projectId/reports/planned-vs-actual', verifyAuth, async (req: Auth
       `)
       .eq('allocation.project_role_allocations.project_setup_id', projectId);
 
+    // If error fetching planned data, return empty instead of crashing
     if (plannedError) {
-      throw plannedError;
+      console.error('Error fetching planned data:', plannedError);
+      return res.json({
+        success: true,
+        data: [],
+        message: 'No planning data available',
+      });
     }
 
     // Get actual hours from timesheet_entries
@@ -906,8 +1308,9 @@ router.get('/:projectId/reports/planned-vs-actual', verifyAuth, async (req: Auth
       `)
       .eq('project_id', projectId);
 
+    // Actual data error is not critical - just means no timesheets yet
     if (actualError) {
-      throw actualError;
+      console.error('Error fetching actual data:', actualError);
     }
 
     // Aggregate data by user and role
@@ -1006,26 +1409,45 @@ router.get('/:projectId/reports/cost-summary', verifyAuth, async (req: AuthReque
       });
     }
 
-    // Get planned cost from project_setup_totals
+    // Check if project is finalized
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('setup_status')
+      .eq('id', projectId)
+      .single();
+
+    // If project not finalized, return empty data
+    if (projectError || !project || project.setup_status !== 'ready') {
+      return res.json({
+        success: true,
+        data: {
+          planned_cost: 0,
+          actual_cost: 0,
+          variance: 0,
+          variance_percentage: 0,
+          budget_status: 'on_track' as const,
+        },
+        message: 'Planning not finalized. Complete planning to view cost summary.',
+      });
+    }
+
+    // Get planned cost from project_setups
     const { data: setup, error: setupError } = await supabase
       .from('project_setups')
-      .select('total_cost')
+      .select('total_internal_cost')
       .eq('project_id', projectId)
       .single();
 
-    if (setupError) {
-      throw setupError;
-    }
+    const planned_cost = setup?.total_internal_cost || 0;
 
-    const planned_cost = setup?.total_cost || 0;
-
-    // Get actual cost from project_costing
+    // Get actual cost from project_costing (may not exist yet)
     const { data: costing, error: costingError } = await supabase
       .from('project_costing')
       .select('total_cost_internal')
       .eq('project_id', projectId)
       .single();
 
+    // If no costing data yet, that's okay - just means no timesheets logged
     const actual_cost = costing?.total_cost_internal || 0;
 
     // Calculate variance
@@ -1239,6 +1661,217 @@ router.get('/:projectId/reports/export', verifyAuth, async (req: AuthRequest, re
       success: false,
       message: 'Failed to export report',
       error: error.message,
+    });
+  }
+});
+
+/**
+ * PUT /api/project-setup/:projectId/finalize
+ * Finalize planning with validation
+ */
+router.put('/:projectId/finalize', verifyAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const { projectId } = req.params;
+
+    // Check permissions
+    if (!(await canManageProject(req.user.id, projectId))) {
+      return res.status(403).json({
+        success: false,
+        message: 'Insufficient permissions',
+      });
+    }
+
+    // Fetch setup separately
+    const { data: setup, error: setupError } = await supabase
+      .from('project_setups')
+      .select('*')
+      .eq('project_id', projectId)
+      .single();
+
+    if (setupError || !setup) {
+      return res.status(404).json({
+        success: false,
+        message: 'Project setup not found',
+      });
+    }
+
+    // Fetch allocations separately (project_setups and project_role_allocations are not directly related)
+    const { data: allocations, error: allocError } = await supabase
+      .from('project_role_allocations')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('row_order', { ascending: true });
+
+    if (allocError) {
+      throw allocError;
+    }
+
+    // Attach allocations to setup object for compatibility with existing validation code
+    setup.allocations = allocations || [];
+
+    // Validation: At least one allocation exists
+    if (!setup.allocations || setup.allocations.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot finalize: Add at least one resource allocation',
+      });
+    }
+
+    // Validation: Each allocation must be complete with detailed errors
+    const validationErrors: Array<{ row_index: number; errors: string[] }> = [];
+    
+    for (let i = 0; i < setup.allocations.length; i++) {
+      const allocation = setup.allocations[i];
+      const rowErrors: string[] = [];
+
+      if (!allocation.role_id) {
+        rowErrors.push('Role is required');
+      }
+      if (!allocation.user_id) {
+        rowErrors.push('User is required');
+      }
+      if (!allocation.hourly_rate || allocation.hourly_rate <= 0) {
+        rowErrors.push('Hourly rate must be greater than 0');
+      }
+
+      // Check if allocation has at least one week with hours > 0
+      const { data: weeklyHours } = await supabase
+        .from('project_weekly_hours')
+        .select('hours')
+        .eq('allocation_id', allocation.id);
+
+      const totalHours = (weeklyHours || []).reduce((sum, wh) => sum + Number(wh.hours || 0), 0);
+      if (totalHours <= 0) {
+        rowErrors.push('At least one week must have hours greater than 0');
+      } else {
+        // If hours > 0, customer rate must be > 0
+        if (!allocation.customer_rate_per_hour || allocation.customer_rate_per_hour <= 0) {
+          rowErrors.push('Customer rate must be greater than 0 when hours are allocated');
+        }
+      }
+
+      if (rowErrors.length > 0) {
+        validationErrors.push({
+          row_index: i + 1,
+          errors: rowErrors,
+        });
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed. Please fix the errors below.',
+        validation_errors: validationErrors,
+      });
+    }
+
+    // Note: Customer rate validation is now per-row (checked above)
+    // Global customer_rate_per_hour in project_setups is kept for backward compatibility and as default for new rows
+
+    // Get project to get organization_id
+    const { data: project, error: projectFetchError } = await supabase
+      .from('projects')
+      .select('organization_id, project_type')
+      .eq('id', projectId)
+      .single();
+
+    if (projectFetchError || !project) {
+      throw projectFetchError || new Error('Project not found');
+    }
+
+    // For Type B (planned) projects: Create project_members and timesheets from allocations
+    if (project.project_type === 'planned') {
+      // Get all validated allocations (they have user_id and role_id)
+      // Use setup.allocations which we already fetched above
+      const validatedAllocations = (setup.allocations || []).filter(
+        (alloc: any) => alloc.user_id && alloc.role_id
+      );
+
+      if (validatedAllocations.length > 0) {
+        // Create project_members for all users in allocations
+        const memberInserts = validatedAllocations.map((alloc: any) => ({
+          project_id: projectId,
+          user_id: alloc.user_id,
+          role_id: alloc.role_id,
+          organization_id: project.organization_id,
+        }));
+
+        // Use upsert to avoid duplicates if members already exist
+        const { error: membersError } = await supabase
+          .from('project_members')
+          .upsert(memberInserts, {
+            onConflict: 'project_id,user_id',
+            ignoreDuplicates: false,
+          });
+
+        if (membersError) {
+          console.error('Error creating project members:', membersError);
+          throw new Error(`Failed to create project members: ${membersError.message}`);
+        }
+
+        // Create timesheets for all users (one per user per project)
+        const timesheetInserts = validatedAllocations.map((alloc: any) => ({
+          project_id: projectId,
+          user_id: alloc.user_id,
+          status: 'DRAFT',
+        }));
+
+        // Use upsert to avoid duplicates
+        const { error: timesheetsError } = await supabase
+          .from('timesheets')
+          .upsert(timesheetInserts, {
+            onConflict: 'project_id,user_id',
+            ignoreDuplicates: false,
+          });
+
+        if (timesheetsError) {
+          console.error('Error creating timesheets:', timesheetsError);
+          // Don't fail finalization if timesheet creation fails - log and continue
+          console.warn('Continuing finalization despite timesheet creation errors');
+        }
+      }
+    }
+
+    // Update project status to finalized (setup_status is in projects table, not project_setups)
+    const { error: updateError } = await supabase
+      .from('projects')
+      .update({ 
+        setup_status: 'ready',
+      })
+      .eq('id', projectId);
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Planning finalized successfully',
+    });
+  } catch (error: any) {
+    console.error(`Error finalizing planning for project ${projectId}:`, {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to finalize planning',
+      error: error.message || 'Unknown error occurred',
+      ...(process.env.NODE_ENV === 'development' && {
+        details: error.details,
+        hint: error.hint,
+      }),
     });
   }
 });

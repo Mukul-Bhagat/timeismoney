@@ -122,7 +122,23 @@ router.get('/', verifyAuth, async (req: AuthRequest, res: Response) => {
     // Fetch projects with member counts
     const { data: projects, error: projectsError } = await supabase
       .from('projects')
-      .select('id, organization_id, title, description, start_date, end_date, status, created_at')
+      .select(`
+        id, 
+        organization_id, 
+        title, 
+        description, 
+        start_date, 
+        end_date, 
+        status,
+        project_type,
+        daily_working_hours,
+        project_manager_1_id,
+        project_manager_2_id,
+        setup_status,
+        created_at,
+        project_manager_1:project_manager_1_id(id, email),
+        project_manager_2:project_manager_2_id(id, email)
+      `)
       .eq('organization_id', organizationId)
       .order('created_at', { ascending: false });
 
@@ -264,6 +280,8 @@ router.get('/:id', verifyAuth, async (req: AuthRequest, res: Response) => {
  * Create project with members (transactional)
  */
 router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
+  console.log('🔷 CREATE PROJECT - Start', { body: req.body });
+  
   try {
     if (!req.user) {
       return res.status(401).json({
@@ -272,7 +290,19 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const { title, description, start_date, end_date, status = 'active', members, organization_id } = req.body;
+    const { 
+      title, 
+      description, 
+      start_date, 
+      end_date, 
+      status = 'active', 
+      members, 
+      organization_id,
+      project_type = 'simple',
+      daily_working_hours = 8,
+      project_manager_1_id,
+      project_manager_2_id,
+    } = req.body;
 
     // Validate required fields
     if (!title || !title.trim()) {
@@ -307,17 +337,43 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Validate members
-    if (!members || !Array.isArray(members) || members.length === 0) {
-      console.error('Project creation failed: No members provided');
-      console.error('Members received:', members);
+    // Validate project type
+    if (project_type !== 'simple' && project_type !== 'planned') {
       return res.status(400).json({
         success: false,
-        message: 'At least one project member is required',
+        message: 'Project type must be either "simple" or "planned"',
       });
     }
 
-    console.log('Validating members:', members.length, 'members provided');
+    // Validate daily working hours for Type A projects
+    if (project_type === 'simple') {
+      if (daily_working_hours < 1 || daily_working_hours > 24) {
+        return res.status(400).json({
+          success: false,
+          message: 'Daily working hours must be between 1 and 24',
+        });
+      }
+    }
+
+    // Validation for Type B (planned) projects: NO members allowed during creation
+    if (project_type === 'planned' && members && members.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Type B (planned) projects cannot have members assigned during creation. Complete planning first.',
+      });
+    }
+
+    // Validate members for Type A projects
+    if (project_type === 'simple') {
+      // For Type A, members are optional during creation but can be added later
+      // If provided, validate them
+      if (members && Array.isArray(members) && members.length > 0) {
+        // Validation will happen below
+      }
+    }
+
+    console.log('🔷 Step 0: Validations passed');
+    console.log('Validating members:', members?.length || 0, 'members provided');
 
     // Get organization ID
     let organizationId: string;
@@ -349,44 +405,48 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Validate all members belong to the same organization
-    for (const member of members) {
-      if (!member.user_id || !member.role_id) {
-        return res.status(400).json({
-          success: false,
-          message: 'Each member must have user_id and role_id',
-        });
-      }
+    // Validate all members belong to the same organization (if members are provided)
+    if (members && Array.isArray(members) && members.length > 0) {
+      for (const member of members) {
+        if (!member.user_id || !member.role_id) {
+          return res.status(400).json({
+            success: false,
+            message: 'Each member must have user_id and role_id',
+          });
+        }
 
-      // Verify user belongs to organization
-      const { data: user, error: userError } = await supabase
-        .from('users')
-        .select('organization_id')
-        .eq('id', member.user_id)
-        .single();
+        // Verify user belongs to organization
+        const { data: user, error: userError } = await supabase
+          .from('users')
+          .select('organization_id')
+          .eq('id', member.user_id)
+          .single();
 
-      if (userError || !user || user.organization_id !== organizationId) {
-        return res.status(400).json({
-          success: false,
-          message: `User ${member.user_id} does not belong to this organization`,
-        });
-      }
+        if (userError || !user || user.organization_id !== organizationId) {
+          return res.status(400).json({
+            success: false,
+            message: `User ${member.user_id} does not belong to this organization`,
+          });
+        }
 
-      // Verify role belongs to organization
-      const { data: role, error: roleError } = await supabase
-        .from('roles')
-        .select('organization_id')
-        .eq('id', member.role_id)
-        .single();
+        // Verify role belongs to organization
+        const { data: role, error: roleError } = await supabase
+          .from('roles')
+          .select('organization_id')
+          .eq('id', member.role_id)
+          .single();
 
-      if (roleError || !role || role.organization_id !== organizationId) {
-        return res.status(400).json({
-          success: false,
-          message: `Role ${member.role_id} does not belong to this organization`,
-        });
+        if (roleError || !role || role.organization_id !== organizationId) {
+          return res.status(400).json({
+            success: false,
+            message: `Role ${member.role_id} does not belong to this organization`,
+          });
+        }
       }
     }
 
+    console.log('🔷 Step 1: Creating project record');
+    
     // Create project
     const { data: project, error: projectError } = await supabase
       .from('projects')
@@ -397,51 +457,129 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
         start_date: start_date,
         end_date: end_date,
         status: status,
+        project_type: project_type,
+        daily_working_hours: daily_working_hours,
+        project_manager_1_id: project_manager_1_id || null,
+        project_manager_2_id: project_manager_2_id || null,
         created_at: getCurrentUTC().toISOString(),
       })
       .select()
       .single();
 
     if (projectError || !project) {
-      throw projectError || new Error('Failed to create project');
+      console.error('❌ PROJECT INSERT ERROR:', projectError);
+      console.error('Error details:', JSON.stringify(projectError, null, 2));
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create project',
+        error: projectError?.message || 'Unknown database error',
+      });
     }
 
-    // Insert project members
-    console.log('Creating project members:', JSON.stringify(members, null, 2));
-    console.log('Project ID:', project.id);
-    console.log('Organization ID:', organizationId);
+    console.log('✅ Step 1 Complete: Project created:', project.id);
+
+    // For Type B (planned) projects, create project_setups record
+    if (project_type === 'planned') {
+      console.log('🔷 Step 2: Type B detected, creating project_setups');
+      
+      // Calculate total weeks based on project dates
+      const startDate = new Date(project.start_date);
+      const endDate = new Date(project.end_date);
+      const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
+      const diffWeeks = Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 7));
+      
+      const { error: setupError } = await supabase
+        .from('project_setups')
+        .insert({
+          project_id: project.id,
+          total_weeks: diffWeeks,
+          total_internal_hours: 0,
+          total_internal_cost: 0,
+          customer_rate_per_hour: 0,
+          total_customer_amount: 0,
+          gross_margin_percentage: 0,
+          sold_cost_percentage: 11.00,
+          current_margin_percentage: 0,
+          margin_status: 'red',
+        });
+
+      if (setupError) {
+        console.error('❌ SETUP INSERT ERROR:', setupError);
+        console.error('Error details:', JSON.stringify(setupError, null, 2));
+        console.log('🔄 Rolling back: Deleting project', project.id);
+        
+        // Rollback: Delete the project
+        await supabase.from('projects').delete().eq('id', project.id);
+        
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to initialize project planning setup',
+          error: setupError.message || 'Unknown database error',
+        });
+      }
+
+      console.log('✅ Step 2 Complete: project_setups created for project:', project.id);
+    }
+
+    console.log('🔷 Step 3: Processing members');
     
-    const memberInserts = members.map((member: any) => ({
-      project_id: project.id,
-      user_id: member.user_id,
-      role_id: member.role_id,
-      organization_id: organizationId,
-      assigned_at: getCurrentUTC().toISOString(),
-    }));
+    // Insert project members (if provided)
+    let insertedMembers = [];
+    if (members && Array.isArray(members) && members.length > 0) {
+      console.log('Creating project members:', members.length, 'members');
+      console.log('Project ID:', project.id);
+      console.log('Organization ID:', organizationId);
+      
+      const memberInserts = members.map((member: any) => ({
+        project_id: project.id,
+        user_id: member.user_id,
+        role_id: member.role_id,
+        organization_id: organizationId,
+        assigned_at: getCurrentUTC().toISOString(),
+      }));
 
-    console.log('Member inserts:', JSON.stringify(memberInserts, null, 2));
+      console.log('Member inserts:', JSON.stringify(memberInserts, null, 2));
 
-    const { data: insertedMembers, error: membersError } = await supabase
-      .from('project_members')
-      .insert(memberInserts)
-      .select();
+      const { data: membersData, error: membersError } = await supabase
+        .from('project_members')
+        .insert(memberInserts)
+        .select();
 
-    if (membersError) {
-      console.error('Error inserting project members:', membersError);
-      console.error('Error details:', JSON.stringify(membersError, null, 2));
-      // Rollback: Delete the project if member insertion fails
-      await supabase.from('projects').delete().eq('id', project.id);
-      throw new Error(`Failed to assign project members: ${membersError.message || 'Unknown error'}`);
+      if (membersError) {
+        console.error('❌ MEMBERS INSERT ERROR:', membersError);
+        console.error('Error details:', JSON.stringify(membersError, null, 2));
+        console.log('🔄 Rolling back: Deleting project', project.id);
+        
+        // Rollback: Delete the project if member insertion fails
+        await supabase.from('projects').delete().eq('id', project.id);
+        
+        return res.status(500).json({
+          success: false,
+          message: `Failed to assign project members: ${membersError.message || 'Unknown error'}`,
+          error: membersError.message,
+        });
+      }
+
+      if (!membersData || membersData.length === 0) {
+        console.error('❌ No members were inserted, but no error was returned');
+        console.log('🔄 Rolling back: Deleting project', project.id);
+        
+        // Rollback: Delete the project if member insertion fails
+        await supabase.from('projects').delete().eq('id', project.id);
+        
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to assign project members: No members were inserted',
+        });
+      }
+
+      insertedMembers = membersData;
+      console.log('✅ Step 3 Complete: Successfully inserted members:', insertedMembers.length);
+    } else {
+      console.log('✅ Step 3 Complete: No members to process (Type B project or optional Type A)');
     }
 
-    if (!insertedMembers || insertedMembers.length === 0) {
-      console.error('No members were inserted, but no error was returned');
-      // Rollback: Delete the project if member insertion fails
-      await supabase.from('projects').delete().eq('id', project.id);
-      throw new Error('Failed to assign project members: No members were inserted');
-    }
-
-    console.log('Successfully inserted members:', insertedMembers.length);
+    console.log('🎉 SUCCESS: Project created:', project.id);
 
     res.status(201).json({
       success: true,
@@ -452,9 +590,11 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       },
     });
   } catch (error: any) {
+    console.error('❌ UNHANDLED CREATE PROJECT ERROR:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
-      message: 'Failed to create project',
+      message: 'Unexpected error while creating project',
       error: error.message,
     });
   }

@@ -126,6 +126,8 @@ router.post(
         .insert({
           name,
           timezone,
+          currency_code: 'INR',
+          currency_symbol: '₹',
           created_at: getCurrentUTC().toISOString(),
           updated_at: getCurrentUTC().toISOString(),
         })
@@ -266,7 +268,7 @@ router.get(
       // Others can only access their own organization
       const { data: organization, error } = await supabase
         .from('organizations')
-        .select('id, name, timezone, created_at, updated_at')
+        .select('id, name, timezone, currency_code, currency_symbol, created_at, updated_at')
         .eq('id', id)
         .single();
 
@@ -290,6 +292,121 @@ router.get(
       res.status(500).json({
         success: false,
         message: 'Failed to fetch organization',
+        error: error.message,
+      });
+    }
+  }
+);
+
+/**
+ * PUT /api/organizations/:id/currency
+ * Update organization currency (SUPER_ADMIN or ADMIN for their org)
+ */
+router.put(
+  '/:id/currency',
+  verifyAuth,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({
+          success: false,
+          message: 'Authentication required',
+        });
+      }
+
+      const { id } = req.params;
+      const { currency_code, currency_symbol } = req.body;
+
+      // Validate input
+      if (!currency_code || !currency_symbol) {
+        return res.status(400).json({
+          success: false,
+          message: 'currency_code and currency_symbol are required',
+        });
+      }
+
+      // Validate currency code (allowed list)
+      const allowedCurrencies = ['INR', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'CNY'];
+      if (!allowedCurrencies.includes(currency_code.toUpperCase())) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid currency code. Allowed: ${allowedCurrencies.join(', ')}`,
+        });
+      }
+
+      // Get organization
+      const { data: organization, error: orgError } = await supabase
+        .from('organizations')
+        .select('id')
+        .eq('id', id)
+        .single();
+
+      if (orgError || !organization) {
+        return res.status(404).json({
+          success: false,
+          message: 'Organization not found',
+        });
+      }
+
+      // Check permissions: SUPER_ADMIN or ADMIN of this organization
+      const isSuper = req.user.role === 'SUPER_ADMIN';
+      if (!isSuper && req.user.organization_id !== id) {
+        // Check if user has ADMIN role in this organization
+        const { data: adminRole } = await supabase
+          .from('roles')
+          .select('id')
+          .eq('organization_id', id)
+          .eq('name', 'ADMIN')
+          .eq('is_system', true)
+          .single();
+
+        if (adminRole) {
+          const { data: userRole } = await supabase
+            .from('user_roles')
+            .select('id')
+            .eq('user_id', req.user.id)
+            .eq('role_id', adminRole.id)
+            .single();
+
+          if (!userRole) {
+            return res.status(403).json({
+              success: false,
+              message: 'Insufficient permissions. SUPER_ADMIN or ADMIN role required.',
+            });
+          }
+        } else {
+          return res.status(403).json({
+            success: false,
+            message: 'Insufficient permissions. SUPER_ADMIN or ADMIN role required.',
+          });
+        }
+      }
+
+      // Update currency
+      const { data: updatedOrg, error: updateError } = await supabase
+        .from('organizations')
+        .update({
+          currency_code: currency_code.toUpperCase(),
+          currency_symbol: currency_symbol,
+          updated_at: getCurrentUTC().toISOString(),
+        })
+        .eq('id', id)
+        .select('id, name, currency_code, currency_symbol')
+        .single();
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      res.json({
+        success: true,
+        message: 'Currency updated successfully',
+        organization: updatedOrg,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update currency',
         error: error.message,
       });
     }

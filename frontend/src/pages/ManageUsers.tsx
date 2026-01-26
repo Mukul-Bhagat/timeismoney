@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useCurrency } from '../context/CurrencyContext';
 import api from '../config/api';
 import { colors } from '../config/colors';
 import type { User } from '../types';
@@ -9,10 +10,14 @@ import './ManageUsers.css';
 
 export function ManageUsers() {
   const { user } = useAuth();
+  const { symbol } = useCurrency();
   const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editingRateUserId, setEditingRateUserId] = useState<string | null>(null);
+  const [editingRate, setEditingRate] = useState<number | null>(null);
+  const [savingRate, setSavingRate] = useState(false);
   
   // Single user creation form state
   const [email, setEmail] = useState('');
@@ -349,15 +354,109 @@ export function ManageUsers() {
                     <tr>
                       <th>Email</th>
                       <th>Phone</th>
+                      <th>Hourly Rate</th>
                       <th>Status</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {users.map((user) => (
-                      <tr key={user.id}>
-                        <td>{user.email}</td>
-                        <td>{user.phone || '-'}</td>
+                    {users.map((userItem) => (
+                      <tr key={userItem.id}>
+                        <td>{userItem.email}</td>
+                        <td>{userItem.phone || '-'}</td>
+                        <td>
+                          {editingRateUserId === userItem.id ? (
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={editingRate || ''}
+                                onChange={(e) => setEditingRate(e.target.value ? parseFloat(e.target.value) : null)}
+                                style={{
+                                  width: '100px',
+                                  padding: '4px 8px',
+                                  border: `1px solid ${colors.border}`,
+                                  borderRadius: '4px',
+                                  fontSize: '14px',
+                                }}
+                                autoFocus
+                              />
+                              <button
+                                onClick={async () => {
+                                  setSavingRate(true);
+                                  try {
+                                    await api.put(`/api/users/${userItem.id}/rate`, {
+                                      rate_per_hour: editingRate,
+                                    });
+                                    setUsers(users.map(u => 
+                                      u.id === userItem.id ? { ...u, rate_per_hour: editingRate } : u
+                                    ));
+                                    setEditingRateUserId(null);
+                                    setEditingRate(null);
+                                  } catch (err: any) {
+                                    alert(err.response?.data?.message || 'Failed to save rate');
+                                  } finally {
+                                    setSavingRate(false);
+                                  }
+                                }}
+                                disabled={savingRate}
+                                style={{
+                                  padding: '4px 8px',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  background: colors.primary.main,
+                                  color: colors.white,
+                                  cursor: savingRate ? 'not-allowed' : 'pointer',
+                                  fontSize: '12px',
+                                }}
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingRateUserId(null);
+                                  setEditingRate(null);
+                                }}
+                                style={{
+                                  padding: '4px 8px',
+                                  border: `1px solid ${colors.border}`,
+                                  borderRadius: '4px',
+                                  background: colors.white,
+                                  cursor: 'pointer',
+                                  fontSize: '12px',
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <span style={{ color: colors.text.primary }}>
+                                {userItem.rate_per_hour 
+                                  ? `${symbol}${userItem.rate_per_hour.toFixed(2)}/hr` 
+                                  : 'Not set'}
+                              </span>
+                              <button
+                                onClick={() => {
+                                  setEditingRateUserId(userItem.id);
+                                  setEditingRate(userItem.rate_per_hour || null);
+                                }}
+                                style={{
+                                  padding: '2px 6px',
+                                  border: `1px solid ${colors.border}`,
+                                  borderRadius: '4px',
+                                  background: colors.white,
+                                  cursor: 'pointer',
+                                  fontSize: '11px',
+                                  color: colors.text.secondary,
+                                }}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          )}
+                        </td>
                         <td>
                           <span
                             className="manage-users-status"
@@ -365,7 +464,7 @@ export function ManageUsers() {
                               color: colors.status.success,
                             }}
                           >
-                            {user.status || 'Active'}
+                            {userItem.status || 'Active'}
                           </span>
                         </td>
                         <td>

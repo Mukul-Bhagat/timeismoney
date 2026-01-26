@@ -14,6 +14,8 @@ import { Roles } from './pages/Roles';
 import { Profile } from './pages/Profile';
 import { OrganizationDashboard } from './pages/OrganizationDashboard';
 import { ProjectSetup } from './pages/ProjectSetup';
+import { CreateProject } from './pages/CreateProject';
+import { ProjectPlanning } from './pages/ProjectPlanning';
 import { jwtDecode } from 'jwt-decode';
 
 interface JWTPayload {
@@ -158,6 +160,22 @@ function App() {
           element={
             <ProtectedRoute>
               <ProjectSetup />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/create-project"
+          element={
+            <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']}>
+              <CreateProject />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/project/:projectId/planning"
+          element={
+            <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'MANAGER']}>
+              <ProjectPlanning />
             </ProtectedRoute>
           }
         />

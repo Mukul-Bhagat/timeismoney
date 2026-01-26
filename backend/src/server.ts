@@ -15,7 +15,17 @@ dotenv.config();
 
 const app = express();
 
-app.use(cors());
+// Enable CORS properly for Render + Vercel
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173", // local development
+      // Add your Vercel app URL here when ready
+      // "https://your-vercel-app.vercel.app"
+    ],
+    credentials: true
+  })
+);
 app.use(express.json());
 
 app.get("/", (_req, res) => {

@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 import api from '../../config/api';
 import { colors } from '../../config/colors';
+import { useCurrency } from '../../context/CurrencyContext';
+import type { ProjectWithMembers } from '../../types';
 
 interface ProjectReportsSectionProps {
   projectId: string;
+  project: ProjectWithMembers;
 }
 
 interface PlannedVsActualRow {
@@ -23,18 +26,20 @@ interface CostSummary {
   budget_status: 'under' | 'on_track' | 'over';
 }
 
-export function ProjectReportsSection({ projectId }: ProjectReportsSectionProps) {
-  const [loading, setLoading] = useState(true);
+export function ProjectReportsSection({ projectId, project }: ProjectReportsSectionProps) {
+  const { formatAmount } = useCurrency();
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plannedVsActual, setPlannedVsActual] = useState<PlannedVsActualRow[]>([]);
   const [costSummary, setCostSummary] = useState<CostSummary | null>(null);
   const [exporting, setExporting] = useState(false);
 
+  // Only fetch reports if planning is finalized
   useEffect(() => {
-    if (projectId) {
+    if (projectId && project.setup_status === 'ready') {
       fetchReports();
     }
-  }, [projectId]);
+  }, [projectId, project.setup_status]);
 
   const fetchReports = async () => {
     setLoading(true);
@@ -82,6 +87,31 @@ export function ProjectReportsSection({ projectId }: ProjectReportsSectionProps)
       setExporting(false);
     }
   };
+
+  // If planning is not complete, show message
+  if (project.setup_status !== 'ready') {
+    return (
+      <div style={{
+        padding: '48px 24px',
+        textAlign: 'center',
+        background: '#fef3c7',
+        borderRadius: '8px',
+        border: '1px solid #f59e0b',
+        margin: '24px',
+      }}>
+        <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
+        <div style={{ fontSize: '18px', fontWeight: '600', color: '#92400e', marginBottom: '8px' }}>
+          Planning Not Complete
+        </div>
+        <div style={{ fontSize: '14px', color: '#78350f', marginBottom: '24px' }}>
+          Reports are only available after the cost planning has been finalized.
+        </div>
+        <div style={{ fontSize: '13px', color: '#78350f' }}>
+          Please complete and finalize the planning sheet in the "Cost Planning" tab to view reports.
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -132,7 +162,7 @@ export function ProjectReportsSection({ projectId }: ProjectReportsSectionProps)
                 Planned Cost
               </div>
               <div style={{ fontSize: '24px', fontWeight: '700', color: colors.text.primary }}>
-                ${costSummary.planned_cost.toFixed(2)}
+                {formatAmount(costSummary.planned_cost)}
               </div>
             </div>
             <div style={{
@@ -145,7 +175,7 @@ export function ProjectReportsSection({ projectId }: ProjectReportsSectionProps)
                 Actual Cost
               </div>
               <div style={{ fontSize: '24px', fontWeight: '700', color: colors.text.primary }}>
-                ${costSummary.actual_cost.toFixed(2)}
+                {formatAmount(costSummary.actual_cost)}
               </div>
             </div>
             <div style={{
@@ -162,7 +192,7 @@ export function ProjectReportsSection({ projectId }: ProjectReportsSectionProps)
                 fontWeight: '700', 
                 color: costSummary.variance > 0 ? '#dc2626' : costSummary.variance < 0 ? '#059669' : colors.text.primary 
               }}>
-                ${Math.abs(costSummary.variance).toFixed(2)}
+                {formatAmount(Math.abs(costSummary.variance))}
                 <span style={{ fontSize: '14px', marginLeft: '4px' }}>
                   ({costSummary.variance > 0 ? '+' : ''}{costSummary.variance_percentage.toFixed(1)}%)
                 </span>

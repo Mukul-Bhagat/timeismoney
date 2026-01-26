@@ -33,6 +33,8 @@ export interface User {
 export type ProjectStatus = 'active' | 'completed';
 
 // Project interface
+export type ProjectType = 'simple' | 'planned';
+
 export interface Project {
   id: string;
   organization_id: string;
@@ -41,11 +43,23 @@ export interface Project {
   start_date: string;
   end_date: string;
   status: ProjectStatus;
-  setup_status?: 'draft' | 'setup_done' | 'locked';
-  project_manager_id?: string;
+  project_type: ProjectType; // NEW: Type of project (simple or planned)
+  daily_working_hours: number; // NEW: Default daily hours for Type A projects
+  project_manager_1_id: string | null; // NEW: Primary project manager
+  project_manager_2_id: string | null; // NEW: Secondary project manager
+  setup_status?: 'draft' | 'ready' | 'locked';
+  project_manager_id?: string; // DEPRECATED: Keep for backward compatibility
   created_at: string;
   member_count?: number;
   project_manager?: {
+    id: string;
+    email: string;
+  };
+  project_manager_1?: { // NEW: Primary PM details
+    id: string;
+    email: string;
+  };
+  project_manager_2?: { // NEW: Secondary PM details
     id: string;
     email: string;
   };
@@ -170,7 +184,7 @@ export interface ProjectWithSubmittedTimesheets extends Project {
 export type MarginStatus = 'green' | 'yellow' | 'red';
 
 // Setup status type
-export type SetupStatus = 'draft' | 'setup_done' | 'locked';
+export type SetupStatus = 'draft' | 'ready' | 'locked';
 
 // Project setup header interface
 export interface ProjectSetup {

@@ -56,7 +56,10 @@ export function ProjectDetailsModal({
       setStartDate(project.start_date.split('T')[0]);
       setEndDate(project.end_date.split('T')[0]);
       setStatus(project.status);
-      setMembers(project.members || []);
+      // Ensure members is always an array
+      const projectMembers = project.members || [];
+      console.log('Setting members from project:', projectMembers.length, 'members');
+      setMembers(projectMembers);
       setIsEditMode(false);
       setNewMembers([]);
       setActiveTab('overview');
@@ -922,21 +925,87 @@ export function ProjectDetailsModal({
                         </span>
                       </div>
                       <div>
-                        <strong style={{ color: colors.text.secondary }}>Planning Status:</strong>{' '}
+                        <strong style={{ color: colors.text.secondary }}>Project Type:</strong>{' '}
                         <span
                           style={{
                             padding: '4px 8px',
                             borderRadius: '4px',
                             fontSize: '12px',
                             fontWeight: '500',
-                            background: project.setup_status === 'setup_done' ? '#d1fae5' : '#fef3c7',
-                            color: project.setup_status === 'setup_done' ? '#065f46' : '#92400e',
+                            background: project.project_type === 'simple' ? '#dbeafe' : '#fce7f3',
+                            color: project.project_type === 'simple' ? '#1e40af' : '#9f1239',
                           }}
                         >
-                          {project.setup_status === 'setup_done' ? '🟢 Ready' : '🟡 Draft'}
+                          {project.project_type === 'simple' ? '⚡ Simple Daily Working' : '📊 Planned / Cost-Based'}
                         </span>
                       </div>
+                      {project.project_type === 'simple' && (
+                        <div>
+                          <strong style={{ color: colors.text.secondary }}>Daily Working Hours:</strong>{' '}
+                          <span style={{ color: colors.text.primary }}>{project.daily_working_hours || 8} hours</span>
+                        </div>
+                      )}
+                      {project.project_type === 'planned' && (
+                        <div>
+                          <strong style={{ color: colors.text.secondary }}>Planning Status:</strong>{' '}
+                          <span
+                            style={{
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              fontSize: '12px',
+                              fontWeight: '500',
+                              background: project.setup_status === 'ready' ? '#d1fae5' : '#fef3c7',
+                              color: project.setup_status === 'ready' ? '#065f46' : '#92400e',
+                            }}
+                          >
+                            {project.setup_status === 'ready' ? '🟢 Ready' : '🟡 Draft'}
+                          </span>
+                        </div>
+                      )}
+                      {project.project_manager_1 && (
+                        <div>
+                          <strong style={{ color: colors.text.secondary }}>Primary PM:</strong>{' '}
+                          <span style={{ color: colors.text.primary }}>{project.project_manager_1.email}</span>
+                        </div>
+                      )}
+                      {project.project_manager_2 && (
+                        <div>
+                          <strong style={{ color: colors.text.secondary }}>Secondary PM:</strong>{' '}
+                          <span style={{ color: colors.text.primary }}>{project.project_manager_2.email}</span>
+                        </div>
+                      )}
                     </div>
+                    
+                    {/* Open Planning Sheet button for Type B projects */}
+                    {project.project_type === 'planned' && (
+                      <div style={{ marginTop: '16px' }}>
+                        <button
+                          onClick={() => navigate(`/project/${project.id}/planning`)}
+                          style={{
+                            padding: '10px 20px',
+                            border: 'none',
+                            borderRadius: '6px',
+                            background: '#3b82f6',
+                            color: 'white',
+                            fontSize: '14px',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = '#2563eb';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = '#3b82f6';
+                          }}
+                        >
+                          📊 Open Planning Sheet
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="modal-actions">
@@ -1101,7 +1170,7 @@ export function ProjectDetailsModal({
               )}
 
               {activeTab === 'reports' && (
-                <ProjectReportsSection projectId={project.id} />
+                <ProjectReportsSection projectId={project.id} project={project} />
               )}
             </div>
 

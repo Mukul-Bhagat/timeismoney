@@ -1,0 +1,122 @@
+/* ConfirmModal Styles */
+/* Reuses modal-overlay and modal-content from Roles.css */
+
+.confirm-modal-content {
+  max-width: 500px;
+  width: 90%;
+}
+
+.confirm-modal-body {
+  padding: 24px;
+}
+
+.confirm-modal-description {
+  margin: 0 0 20px 0;
+  color: #1e293b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.confirm-info-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.confirm-info-box h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.confirm-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.confirm-info-row:last-child {
+  border-bottom: none;
+}
+
+.confirm-info-label {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.confirm-info-value {
+  font-size: 14px;
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.confirm-modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  padding: 20px 24px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.confirm-modal-button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 100px;
+}
+
+.confirm-modal-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.confirm-modal-button-cancel {
+  background: #ffffff;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.confirm-modal-button-cancel:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.confirm-modal-button-confirm {
+  color: #ffffff;
+}
+
+.confirm-modal-button-confirm:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .confirm-modal-content {
+    width: 95%;
+    max-width: 95%;
+  }
+
+  .confirm-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .confirm-modal-button {
+    width: 100%;
+  }
+}
+

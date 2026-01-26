@@ -311,6 +311,9 @@ export async function validateProjectSetup(projectId: string): Promise<{
 
 /**
  * Get default hourly rate for a user-role combination
+ * Priority: 1. User-specific rate (users.rate_per_hour)
+ *          2. Role default rate (roles.default_rate_per_hour)
+ *          3. User-hourly-rates table (existing)
  * Returns null if no rate is configured
  */
 export async function getDefaultHourlyRate(
@@ -319,6 +322,29 @@ export async function getDefaultHourlyRate(
   organizationId: string
 ): Promise<number | null> {
   try {
+    // Priority 1: Check user-specific rate
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('rate_per_hour')
+      .eq('id', userId)
+      .single();
+
+    if (!userError && user && user.rate_per_hour !== null && user.rate_per_hour !== undefined) {
+      return Number(user.rate_per_hour);
+    }
+
+    // Priority 2: Check role default rate
+    const { data: role, error: roleError } = await supabase
+      .from('roles')
+      .select('default_rate_per_hour')
+      .eq('id', roleId)
+      .single();
+
+    if (!roleError && role && role.default_rate_per_hour !== null && role.default_rate_per_hour !== undefined) {
+      return Number(role.default_rate_per_hour);
+    }
+
+    // Priority 3: Check user_hourly_rates table (existing logic)
     const { data, error } = await supabase
       .from('user_hourly_rates')
       .select('hourly_rate')

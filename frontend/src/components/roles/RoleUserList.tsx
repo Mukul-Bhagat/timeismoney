@@ -1,10 +1,12 @@
 import { colors } from '../../config/colors';
+import { useCurrency } from '../../context/CurrencyContext';
 import './Roles.css';
 
 interface User {
   id: string;
   email: string;
   assigned_at: string;
+  rate_per_hour?: number | null;
 }
 
 interface RoleUserListProps {
@@ -13,6 +15,7 @@ interface RoleUserListProps {
   removingUserId: string | null;
   roleName: string;
   isSystemRole: boolean;
+  defaultRate?: number | null;
 }
 
 export function RoleUserList({
@@ -21,7 +24,9 @@ export function RoleUserList({
   removingUserId,
   roleName,
   isSystemRole,
+  defaultRate,
 }: RoleUserListProps) {
+  const { symbol } = useCurrency();
   if (users.length === 0) {
     return (
       <div style={{ padding: '24px', textAlign: 'center', color: colors.text.secondary }}>
@@ -47,12 +52,19 @@ export function RoleUserList({
               borderBottom: `1px solid ${colors.border}`,
             }}
           >
-            <div>
+            <div style={{ flex: 1 }}>
               <div style={{ color: colors.text.primary, fontWeight: '500' }}>
                 {user.email}
               </div>
               <div style={{ color: colors.text.secondary, fontSize: '12px', marginTop: '4px' }}>
                 Assigned {new Date(user.assigned_at).toLocaleDateString()}
+              </div>
+              <div style={{ color: colors.text.secondary, fontSize: '12px', marginTop: '4px' }}>
+                Rate: {user.rate_per_hour 
+                  ? `${symbol}${user.rate_per_hour.toFixed(2)}/hr` 
+                  : defaultRate 
+                    ? `${symbol}${defaultRate.toFixed(2)}/hr (default)` 
+                    : 'Not set'}
               </div>
             </div>
             <button

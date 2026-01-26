@@ -39,7 +39,7 @@ export function CostPlanningList() {
   const getSetupStatusBadge = (status?: string) => {
     const statusMap = {
       draft: { color: '#fef3c7', text: '#92400e', label: 'Draft' },
-      setup_done: { color: '#d1fae5', text: '#065f46', label: 'Setup Complete' },
+      ready: { color: '#d1fae5', text: '#065f46', label: 'Planning Complete' },
       locked: { color: '#e0e7ff', text: '#3730a3', label: 'Locked' },
     };
 
