@@ -360,23 +360,35 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
   // Get all timesheets for this project
   const { data: timesheets, error: timesheetsError } = await supabase
     .from('timesheets')
-    .select(`
-      id,
-      project_id,
-      user_id,
-      status,
-      submitted_at,
-      approved_at,
-      entries:timesheet_entries (
-        id,
-        date,
-        hours
-      )
-    `)
+    .select('id, project_id, user_id, status, submitted_at, approved_at')
     .eq('project_id', projectId);
 
   if (timesheetsError) {
     throw timesheetsError;
+  }
+
+  // Get all timesheet entries separately (more reliable than nested query)
+  const timesheetIds = (timesheets || []).map((t: any) => t.id);
+  const entriesMap = new Map<string, any[]>();
+
+  if (timesheetIds.length > 0) {
+    const { data: entries, error: entriesError } = await supabase
+      .from('timesheet_entries')
+      .select('timesheet_id, date, hours')
+      .in('timesheet_id', timesheetIds);
+
+    if (entriesError) {
+      console.error('[Approval] Error fetching timesheet entries:', entriesError);
+    } else if (entries) {
+      console.log(`[Approval] Fetched ${entries.length} timesheet entries for ${timesheetIds.length} timesheets`);
+      // Group entries by timesheet_id
+      entries.forEach((entry: any) => {
+        if (!entriesMap.has(entry.timesheet_id)) {
+          entriesMap.set(entry.timesheet_id, []);
+        }
+        entriesMap.get(entry.timesheet_id)!.push(entry);
+      });
+    }
   }
 
   // Get existing costing data
@@ -413,14 +425,22 @@ async function fetchProjectApprovalData(projectId: string, userId: string): Prom
       pendingUsers.push(user?.email || 'Unknown');
     }
 
-    // Map day-wise hours
+    // Map day-wise hours from entries
     const dayHours: { [date: string]: number } = {};
     let totalHours = 0;
 
-    if (timesheet && timesheet.entries) {
-      for (const entry of timesheet.entries) {
-        dayHours[entry.date] = parseFloat(entry.hours || 0);
-        totalHours += parseFloat(entry.hours || 0);
+    if (timesheet) {
+      const entries = entriesMap.get(timesheet.id) || [];
+      console.log(`[Approval] User ${member.user_id} (${user?.email}): Found ${entries.length} entries for timesheet ${timesheet.id}`);
+      
+      for (const entry of entries) {
+        const hours = parseFloat(entry.hours || 0);
+        dayHours[entry.date] = hours;
+        totalHours += hours;
+      }
+      
+      if (entries.length > 0) {
+        console.log(`[Approval] User ${member.user_id}: Total hours = ${totalHours.toFixed(2)}`);
       }
     }
 
@@ -775,6 +795,7 @@ router.post('/projects/:id/approve', verifyAuth, requireRole('ADMIN', 'MANAGER')
     const now = getCurrentUTC().toISOString();
 
     // Update all timesheets to APPROVED
+    console.log(`[Approval] Approving ${timesheetIds.length} timesheet(s) for project ${id}`);
     const { data: updatedTimesheets, error: updateError } = await supabase
       .from('timesheets')
       .update({
@@ -787,7 +808,15 @@ router.post('/projects/:id/approve', verifyAuth, requireRole('ADMIN', 'MANAGER')
       .select();
 
     if (updateError) {
+      console.error('[Approval] Error updating timesheets:', updateError);
       throw updateError;
+    }
+
+    console.log(`[Approval] Successfully approved ${updatedTimesheets?.length || 0} timesheet(s)`);
+    if (updatedTimesheets) {
+      updatedTimesheets.forEach((t: any) => {
+        console.log(`[Approval] Timesheet ${t.id} approved for user ${t.user_id}, status: ${t.status}, approved_at: ${t.approved_at}`);
+      });
     }
 
     res.json({
@@ -973,8 +1002,11 @@ router.get('/projects/:id/export/pdf', verifyAuth, requireRole('ADMIN', 'MANAGER
 
     const { project, dateRange, approvalRows } = approvalData;
 
+    // Check if any row has planned hours data
+    const hasPlannedData = approvalRows.some((r: any) => r.planned_total_hours !== undefined);
+
     // Generate PDF using pdfkit
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    const doc = new PDFDocument({ margin: 50, size: 'A4', layout: 'landscape' });
     const chunks: Buffer[] = [];
     
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -996,59 +1028,144 @@ router.get('/projects/:id/export/pdf', verifyAuth, requireRole('ADMIN', 'MANAGER
     );
     doc.moveDown(2);
     
-    // Table headers
+    // Table headers - adjust column widths based on whether planned data exists
     const tableTop = doc.y;
-    const colWidths = [100, 80, 80, 80, 80, 100];
+    const baseColWidths = [100, 80, 80]; // Name, Role, Total Hours
+    const plannedColWidths = hasPlannedData ? [80, 80, 80] : []; // Planned Hours, Difference, Difference %
+    const finalColWidths = [80, 80, 100]; // Rate, Amount, Quote
+    const colWidths = [...baseColWidths, ...plannedColWidths, ...finalColWidths];
+    const totalTableWidth = colWidths.reduce((sum, w) => sum + w, 0);
     const rowHeight = 25;
     
     // Header row
-    doc.fontSize(10).fillColor('#ffffff').rect(50, tableTop, 500, rowHeight).fill('#2563eb');
-    doc.text('Name', 55, tableTop + 8, { width: colWidths[0] - 10 });
-    doc.text('Role', 55 + colWidths[0], tableTop + 8, { width: colWidths[1] - 10 });
-    doc.text('Total Hours', 55 + colWidths[0] + colWidths[1], tableTop + 8, { width: colWidths[2] - 10 });
-    doc.text('Rate', 55 + colWidths[0] + colWidths[1] + colWidths[2], tableTop + 8, { width: colWidths[3] - 10 });
-    doc.text('Amount', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], tableTop + 8, { width: colWidths[4] - 10 });
-    doc.text('Quote', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], tableTop + 8, { width: colWidths[5] - 10 });
+    doc.fontSize(9).fillColor('#ffffff').rect(50, tableTop, totalTableWidth, rowHeight).fill('#2563eb');
+    let xPos = 55;
+    doc.text('Name', xPos, tableTop + 8, { width: colWidths[0] - 10 });
+    xPos += colWidths[0];
+    doc.text('Role', xPos, tableTop + 8, { width: colWidths[1] - 10 });
+    xPos += colWidths[1];
+    doc.text('Total Hours', xPos, tableTop + 8, { width: colWidths[2] - 10 });
+    xPos += colWidths[2];
+    
+    if (hasPlannedData) {
+      doc.text('Planned', xPos, tableTop + 8, { width: colWidths[3] - 10 });
+      xPos += colWidths[3];
+      doc.text('Difference', xPos, tableTop + 8, { width: colWidths[4] - 10 });
+      xPos += colWidths[4];
+      doc.text('Diff %', xPos, tableTop + 8, { width: colWidths[5] - 10 });
+      xPos += colWidths[5];
+    }
+    
+    doc.text('Rate', xPos, tableTop + 8, { width: colWidths[hasPlannedData ? 6 : 3] - 10 });
+    xPos += colWidths[hasPlannedData ? 6 : 3];
+    doc.text('Amount', xPos, tableTop + 8, { width: colWidths[hasPlannedData ? 7 : 4] - 10 });
+    xPos += colWidths[hasPlannedData ? 7 : 4];
+    doc.text('Quote', xPos, tableTop + 8, { width: colWidths[hasPlannedData ? 8 : 5] - 10 });
     
     // Data rows
     let currentY = tableTop + rowHeight;
     doc.fillColor('#000000');
     
     for (const row of approvalRows) {
-      if (currentY > 700) {
+      if (currentY > 500) {
         // New page
         doc.addPage();
         currentY = 50;
+        // Redraw header on new page
+        doc.fontSize(9).fillColor('#ffffff').rect(50, currentY, totalTableWidth, rowHeight).fill('#2563eb');
+        let headerX = 55;
+        doc.text('Name', headerX, currentY + 8, { width: colWidths[0] - 10 });
+        headerX += colWidths[0];
+        doc.text('Role', headerX, currentY + 8, { width: colWidths[1] - 10 });
+        headerX += colWidths[1];
+        doc.text('Total Hours', headerX, currentY + 8, { width: colWidths[2] - 10 });
+        headerX += colWidths[2];
+        if (hasPlannedData) {
+          doc.text('Planned', headerX, currentY + 8, { width: colWidths[3] - 10 });
+          headerX += colWidths[3];
+          doc.text('Difference', headerX, currentY + 8, { width: colWidths[4] - 10 });
+          headerX += colWidths[4];
+          doc.text('Diff %', headerX, currentY + 8, { width: colWidths[5] - 10 });
+          headerX += colWidths[5];
+        }
+        doc.text('Rate', headerX, currentY + 8, { width: colWidths[hasPlannedData ? 6 : 3] - 10 });
+        headerX += colWidths[hasPlannedData ? 6 : 3];
+        doc.text('Amount', headerX, currentY + 8, { width: colWidths[hasPlannedData ? 7 : 4] - 10 });
+        headerX += colWidths[hasPlannedData ? 7 : 4];
+        doc.text('Quote', headerX, currentY + 8, { width: colWidths[hasPlannedData ? 8 : 5] - 10 });
+        currentY += rowHeight;
+        doc.fillColor('#000000');
       }
       
-      doc.fontSize(9).rect(50, currentY, 500, rowHeight).stroke();
-      doc.text(row.name, 55, currentY + 8, { width: colWidths[0] - 10 });
-      doc.text(row.role, 55 + colWidths[0], currentY + 8, { width: colWidths[1] - 10 });
-      doc.text(row.total_hours.toFixed(2), 55 + colWidths[0] + colWidths[1], currentY + 8, { width: colWidths[2] - 10 });
-      doc.text(row.rate.toFixed(2), 55 + colWidths[0] + colWidths[1] + colWidths[2], currentY + 8, { width: colWidths[3] - 10 });
-      doc.text(row.amount.toFixed(2), 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], currentY + 8, { width: colWidths[4] - 10 });
-      doc.text(row.quote_amount ? row.quote_amount.toFixed(2) : '-', 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], currentY + 8, { width: colWidths[5] - 10 });
+      doc.fontSize(9).rect(50, currentY, totalTableWidth, rowHeight).stroke();
+      let xPos = 55;
+      doc.text(row.name, xPos, currentY + 8, { width: colWidths[0] - 10 });
+      xPos += colWidths[0];
+      doc.text(row.role, xPos, currentY + 8, { width: colWidths[1] - 10 });
+      xPos += colWidths[1];
+      doc.text(row.total_hours.toFixed(2), xPos, currentY + 8, { width: colWidths[2] - 10 });
+      xPos += colWidths[2];
+      
+      if (hasPlannedData) {
+        const plannedHours = row.planned_total_hours !== undefined ? row.planned_total_hours.toFixed(2) : '-';
+        doc.text(plannedHours, xPos, currentY + 8, { width: colWidths[3] - 10 });
+        xPos += colWidths[3];
+        const diffHours = row.difference_hours !== undefined ? row.difference_hours.toFixed(2) : '-';
+        doc.text(diffHours, xPos, currentY + 8, { width: colWidths[4] - 10 });
+        xPos += colWidths[4];
+        const diffPct = row.difference_percentage !== undefined ? `${row.difference_percentage.toFixed(1)}%` : '-';
+        doc.text(diffPct, xPos, currentY + 8, { width: colWidths[5] - 10 });
+        xPos += colWidths[5];
+      }
+      
+      doc.text(row.rate.toFixed(2), xPos, currentY + 8, { width: colWidths[hasPlannedData ? 6 : 3] - 10 });
+      xPos += colWidths[hasPlannedData ? 6 : 3];
+      doc.text(row.amount.toFixed(2), xPos, currentY + 8, { width: colWidths[hasPlannedData ? 7 : 4] - 10 });
+      xPos += colWidths[hasPlannedData ? 7 : 4];
+      doc.text(row.quote_amount ? row.quote_amount.toFixed(2) : '-', xPos, currentY + 8, { width: colWidths[hasPlannedData ? 8 : 5] - 10 });
       
       currentY += rowHeight;
     }
     
     // Totals row
     const totalHours = approvalRows.reduce((sum: number, r: any) => sum + r.total_hours, 0);
+    const totalPlannedHours = hasPlannedData 
+      ? approvalRows.reduce((sum: number, r: any) => sum + (r.planned_total_hours || 0), 0)
+      : 0;
+    const totalDifference = hasPlannedData ? totalHours - totalPlannedHours : 0;
+    const totalDifferencePercentage = hasPlannedData && totalPlannedHours > 0
+      ? (totalDifference / totalPlannedHours) * 100
+      : 0;
     const totalAmount = approvalRows.reduce((sum: number, r: any) => sum + r.amount, 0);
     const totalQuote = approvalRows.reduce((sum: number, r: any) => sum + (r.quote_amount || 0), 0);
     
-    if (currentY > 700) {
+    if (currentY > 500) {
       doc.addPage();
       currentY = 50;
     }
     
     doc.fontSize(10).font('Helvetica-Bold').fillColor('#000000');
-    doc.rect(50, currentY, 500, rowHeight).fill('#f0f0f0').stroke();
-    doc.text('TOTALS', 55, currentY + 8, { width: colWidths[0] + colWidths[1] - 10 });
-    doc.text(totalHours.toFixed(2), 55 + colWidths[0] + colWidths[1], currentY + 8, { width: colWidths[2] - 10 });
-    doc.text('', 55 + colWidths[0] + colWidths[1] + colWidths[2], currentY + 8, { width: colWidths[3] - 10 });
-    doc.text(totalAmount.toFixed(2), 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3], currentY + 8, { width: colWidths[4] - 10 });
-    doc.text(totalQuote.toFixed(2), 55 + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4], currentY + 8, { width: colWidths[5] - 10 });
+    doc.rect(50, currentY, totalTableWidth, rowHeight).fill('#f0f0f0').stroke();
+    let totalsX = 55;
+    doc.text('TOTALS', totalsX, currentY + 8, { width: colWidths[0] + colWidths[1] - 10 });
+    totalsX += colWidths[0] + colWidths[1];
+    doc.text(totalHours.toFixed(2), totalsX, currentY + 8, { width: colWidths[2] - 10 });
+    totalsX += colWidths[2];
+    
+    if (hasPlannedData) {
+      doc.text(totalPlannedHours.toFixed(2), totalsX, currentY + 8, { width: colWidths[3] - 10 });
+      totalsX += colWidths[3];
+      doc.text(totalDifference.toFixed(2), totalsX, currentY + 8, { width: colWidths[4] - 10 });
+      totalsX += colWidths[4];
+      doc.text(`${totalDifferencePercentage.toFixed(1)}%`, totalsX, currentY + 8, { width: colWidths[5] - 10 });
+      totalsX += colWidths[5];
+    }
+    
+    doc.text('', totalsX, currentY + 8, { width: colWidths[hasPlannedData ? 6 : 3] - 10 }); // Rate column empty
+    totalsX += colWidths[hasPlannedData ? 6 : 3];
+    doc.text(totalAmount.toFixed(2), totalsX, currentY + 8, { width: colWidths[hasPlannedData ? 7 : 4] - 10 });
+    totalsX += colWidths[hasPlannedData ? 7 : 4];
+    doc.text(totalQuote.toFixed(2), totalsX, currentY + 8, { width: colWidths[hasPlannedData ? 8 : 5] - 10 });
     
     doc.end();
   } catch (error: any) {
