@@ -155,7 +155,7 @@ router.post(
         });
 
         if (!authError && authData?.user) {
-          authUserId = authData.user.id;
+          authUserId = authData.user.id as `${string}-${string}-${string}-${string}-${string}`;
         }
       } catch (error) {
         console.warn('Supabase Auth user creation failed, using generated UUID:', error);

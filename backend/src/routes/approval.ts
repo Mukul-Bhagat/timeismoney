@@ -339,8 +339,9 @@ router.get('/projects/:id', verifyAuth, requireRole('ADMIN', 'MANAGER'), async (
     }
 
     const { id } = req.params;
+    const projectId = Array.isArray(id) ? id[0] : id;
 
-    const approvalData = await fetchProjectApprovalData(id, req.user.id);
+    const approvalData = await fetchProjectApprovalData(projectId, req.user.id);
 
     if (!approvalData) {
       return res.status(404).json({
@@ -662,9 +663,10 @@ router.get('/projects/:id/export/excel', verifyAuth, requireRole('ADMIN', 'MANAG
     }
 
     const { id } = req.params;
+    const projectId = Array.isArray(id) ? id[0] : id;
 
     // Get project approval data
-    const approvalData = await fetchProjectApprovalData(id, req.user.id);
+    const approvalData = await fetchProjectApprovalData(projectId, req.user.id);
 
     if (!approvalData) {
       return res.status(404).json({
@@ -775,9 +777,10 @@ router.get('/projects/:id/export/pdf', verifyAuth, requireRole('ADMIN', 'MANAGER
     }
 
     const { id } = req.params;
+    const projectId = Array.isArray(id) ? id[0] : id;
 
     // Get project approval data
-    const approvalData = await fetchProjectApprovalData(id, req.user.id);
+    const approvalData = await fetchProjectApprovalData(projectId, req.user.id);
 
     if (!approvalData) {
       return res.status(404).json({

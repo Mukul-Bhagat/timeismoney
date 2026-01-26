@@ -86,7 +86,8 @@ router.get('/:projectId', verifyAuth, async (req: AuthRequest, res: Response) =>
       });
     }
 
-    const { projectId } = req.params;
+    const { projectId: projectIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
 
     // Check permissions
     if (!(await canManageProject(req.user.id, projectId))) {
@@ -218,7 +219,8 @@ router.post('/:projectId', verifyAuth, async (req: AuthRequest, res: Response) =
       });
     }
 
-    const { projectId } = req.params;
+    const { projectId: projectIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
 
     // Check permissions
     if (!(await canManageProject(req.user.id, projectId))) {
@@ -293,7 +295,8 @@ router.put('/:projectId/header', verifyAuth, async (req: AuthRequest, res: Respo
       });
     }
 
-    const { projectId } = req.params;
+    const { projectId: projectIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
     const { customer_rate_per_hour, sold_cost_percentage } = req.body;
 
     // Check permissions
@@ -371,6 +374,9 @@ router.put('/:projectId/header', verifyAuth, async (req: AuthRequest, res: Respo
  * Batch save all planning rows (lenient validation - allows empty rows)
  */
 router.post('/:projectId/save-draft', verifyAuth, async (req: AuthRequest, res: Response) => {
+  const { projectId: projectIdParam } = req.params;
+  const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
+  
   try {
     if (!req.user) {
       return res.status(401).json({
@@ -378,8 +384,6 @@ router.post('/:projectId/save-draft', verifyAuth, async (req: AuthRequest, res: 
         message: 'Authentication required',
       });
     }
-
-    const { projectId } = req.params;
     const { rows, sold_cost_percentage } = req.body;
 
     // Check permissions
@@ -455,6 +459,7 @@ router.post('/:projectId/save-draft', verifyAuth, async (req: AuthRequest, res: 
     const toUpdate: any[] = [];
     const toCreate: any[] = [];
     let nextOrder = maxOrder + 1;
+    let newAllocations: any[] | null = null;
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -527,10 +532,12 @@ router.post('/:projectId/save-draft', verifyAuth, async (req: AuthRequest, res: 
         row_order: c.row_order,
       }));
 
-      const { data: newAllocations, error: createError } = await supabase
+      const { data: insertedAllocations, error: createError } = await supabase
         .from('project_role_allocations')
         .insert(allocationsToInsert)
         .select('id, row_order');
+      
+      newAllocations = insertedAllocations;
 
       if (createError) {
         // Check if error is about missing column (migration not run)
@@ -544,8 +551,8 @@ router.post('/:projectId/save-draft', verifyAuth, async (req: AuthRequest, res: 
       }
 
       // Add weekly hours for new allocations
-      for (let i = 0; i < newAllocations.length; i++) {
-        const allocation = newAllocations[i];
+      for (let i = 0; i < (newAllocations?.length || 0); i++) {
+        const allocation = newAllocations![i];
         const weeklyHours = toCreate[i].weekly_hours;
         
         if (weeklyHours && weeklyHours.length > 0) {
@@ -736,7 +743,8 @@ router.post('/:projectId/allocations', verifyAuth, async (req: AuthRequest, res:
       });
     }
 
-    const { projectId } = req.params;
+    const { projectId: projectIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
     const { role_id, user_id, hourly_rate } = req.body;
 
     // Check permissions
@@ -845,7 +853,9 @@ router.put('/:projectId/allocations/:allocationId', verifyAuth, async (req: Auth
       });
     }
 
-    const { projectId, allocationId } = req.params;
+    const { projectId: projectIdParam, allocationId: allocationIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
+    const allocationId = Array.isArray(allocationIdParam) ? allocationIdParam[0] : allocationIdParam;
     const { role_id, user_id, hourly_rate } = req.body;
 
     // Check permissions
@@ -928,7 +938,9 @@ router.delete('/:projectId/allocations/:allocationId', verifyAuth, async (req: A
       });
     }
 
-    const { projectId, allocationId } = req.params;
+    const { projectId: projectIdParam, allocationId: allocationIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
+    const allocationId = Array.isArray(allocationIdParam) ? allocationIdParam[0] : allocationIdParam;
 
     // Check permissions
     if (!(await canManageProject(req.user.id, projectId))) {
@@ -979,7 +991,9 @@ router.put('/:projectId/allocations/:allocationId/weeks', verifyAuth, async (req
       });
     }
 
-    const { projectId, allocationId } = req.params;
+    const { projectId: projectIdParam, allocationId: allocationIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
+    const allocationId = Array.isArray(allocationIdParam) ? allocationIdParam[0] : allocationIdParam;
     const { weeks } = req.body; // Array of { week_number, hours }
 
     // Check permissions
@@ -1073,7 +1087,8 @@ router.post('/:projectId/finalize', verifyAuth, async (req: AuthRequest, res: Re
       });
     }
 
-    const { projectId } = req.params;
+    const { projectId: projectIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
 
     // Check permissions
     if (!(await canManageProject(req.user.id, projectId))) {
@@ -1247,7 +1262,8 @@ router.get('/:projectId/reports/planned-vs-actual', verifyAuth, async (req: Auth
       });
     }
 
-    const { projectId } = req.params;
+    const { projectId: projectIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
 
     // Check permissions
     if (!(await canManageProject(req.user.id, projectId))) {
@@ -1399,7 +1415,8 @@ router.get('/:projectId/reports/cost-summary', verifyAuth, async (req: AuthReque
       });
     }
 
-    const { projectId } = req.params;
+    const { projectId: projectIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
 
     // Check permissions
     if (!(await canManageProject(req.user.id, projectId))) {
@@ -1498,7 +1515,8 @@ router.get('/:projectId/reports/export', verifyAuth, async (req: AuthRequest, re
       });
     }
 
-    const { projectId } = req.params;
+    const { projectId: projectIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
     const { type } = req.query;
 
     // Check permissions
@@ -1670,6 +1688,9 @@ router.get('/:projectId/reports/export', verifyAuth, async (req: AuthRequest, re
  * Finalize planning with validation
  */
 router.put('/:projectId/finalize', verifyAuth, async (req: AuthRequest, res: Response) => {
+  const { projectId: projectIdParam } = req.params;
+  const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
+  
   try {
     if (!req.user) {
       return res.status(401).json({
@@ -1677,8 +1698,6 @@ router.put('/:projectId/finalize', verifyAuth, async (req: AuthRequest, res: Res
         message: 'Authentication required',
       });
     }
-
-    const { projectId } = req.params;
 
     // Check permissions
     if (!(await canManageProject(req.user.id, projectId))) {

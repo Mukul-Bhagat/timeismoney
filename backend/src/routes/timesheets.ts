@@ -558,7 +558,8 @@ router.get('/project/:projectId', verifyAuth, async (req: AuthRequest, res: Resp
       });
     }
 
-    const { projectId } = req.params;
+    const { projectId: projectIdParam } = req.params;
+    const projectId = Array.isArray(projectIdParam) ? projectIdParam[0] : projectIdParam;
 
     // Check if user is assigned to project
     const isAssigned = await isUserAssignedToProject(req.user.id, projectId);
@@ -812,7 +813,8 @@ router.post('/:id/submit', verifyAuth, async (req: AuthRequest, res: Response) =
       });
     }
 
-    const { id } = req.params;
+    const { id: idParam } = req.params;
+    const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
     // Get timesheet
     const { data: timesheet, error: fetchError } = await supabase
@@ -974,7 +976,8 @@ router.get('/:id/export', verifyAuth, async (req: AuthRequest, res: Response) =>
       .eq('user_id', timesheet.user_id)
       .single();
 
-    const roleName = projectMember?.role?.name || 'N/A';
+    const role = projectMember?.role as any;
+    const roleName = (Array.isArray(role) ? role[0]?.name : role?.name) || 'N/A';
 
     // Sort entries by date
     const entries = (timesheet.entries || []).sort((a: any, b: any) => {

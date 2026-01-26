@@ -165,7 +165,7 @@ router.post(
         });
 
         if (!authError && authData?.user) {
-          authUserId = authData.user.id;
+          authUserId = authData.user.id as `${string}-${string}-${string}-${string}-${string}`;
         }
         // If Supabase Auth creation fails, continue with our own UUID
       } catch (error) {
@@ -350,7 +350,7 @@ router.post(
 
       // Parse CSV
       const lines = csvData.trim().split('\n');
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+      const headers = lines[0].split(',').map((h: string) => h.trim().toLowerCase());
       const emailIndex = headers.indexOf('email');
       const phoneIndex = headers.indexOf('phone');
 
@@ -372,7 +372,7 @@ router.post(
         const row = lines[i].trim();
         if (!row) continue;
 
-        const values = row.split(',').map(v => v.trim());
+        const values = row.split(',').map((v: string) => v.trim());
         const email = values[emailIndex];
         const phone = phoneIndex >= 0 ? values[phoneIndex] : undefined;
 
@@ -419,7 +419,7 @@ router.post(
             });
 
             if (!authError && authData?.user) {
-              authUserId = authData.user.id;
+              authUserId = authData.user.id as `${string}-${string}-${string}-${string}-${string}`;
             }
           } catch (error) {
             console.warn('Supabase Auth user creation failed, using generated UUID:', error);
