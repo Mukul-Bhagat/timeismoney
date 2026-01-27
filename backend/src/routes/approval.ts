@@ -970,10 +970,10 @@ router.post('/projects/:id/approve', verifyAuth, requireRole('ADMIN', 'MANAGER')
       console.error('[Approval] =========================');
       
       // Check if it's a column error
-      if (updateError.message?.includes('column') || updateError.message?.includes('approved_by')) {
+      if (updateError.message?.includes('column') || updateError.message?.includes('approved_by') || updateError.code === 'PGRST204') {
         return res.status(500).json({
           success: false,
-          message: 'Database schema error: approved_by column may not exist. Please run migration_approval_system.sql',
+          message: 'Database schema error: approved_by column does not exist. Please run database/migration_add_approved_by.sql in your Supabase SQL Editor.',
           error: updateError.message,
           code: updateError.code,
         });
