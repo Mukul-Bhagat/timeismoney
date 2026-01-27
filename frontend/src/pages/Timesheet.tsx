@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../config/api';
 import { useAuth } from '../context/AuthContext';
-import type { Project, Timesheet, TimesheetEntry } from '../types';
+import type { Timesheet, TimesheetEntry } from '../types';
 import { formatDateIST } from '../utils/timezone';
 import './Page.css';
 import './Timesheet.css';
@@ -567,7 +567,6 @@ export function Timesheet() {
                             projectData.project.start_date,
                             projectData.project.end_date
                           );
-                          const isDisabled = !isInRange || isReadOnly;
 
                           return (
                             <td
