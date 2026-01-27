@@ -11,33 +11,61 @@ interface DateEntry {
   hours: number;
 }
 
+interface MonthProjectData {
+  id: string;
+  title: string;
+  role_name: string;
+  start_date: string;
+  end_date: string;
+  timesheet: {
+    id: string;
+    status: 'DRAFT' | 'SUBMITTED' | 'APPROVED';
+    submitted_at: string | null;
+    approved_at: string | null;
+    entries: { date: string; hours: number }[];
+  } | null;
+}
+
 interface ProjectTimesheetData {
-  project: Project;
+  project: {
+    id: string;
+    title: string;
+    role_name: string;
+    start_date: string;
+    end_date: string;
+  };
   roleName: string;
   timesheet: Timesheet | null;
   entries: Map<string, number>; // date -> hours
-  dates: string[];
+  hasUnsavedChanges: boolean;
 }
 
 export function Timesheet() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
+  const [currentMonth, setCurrentMonth] = useState<string>(() => {
+    // Initialize to current month (YYYY-MM)
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [projects, setProjects] = useState<ProjectTimesheetData[]>([]);
+  const [monthDates, setMonthDates] = useState<string[]>([]);
   const [historyTimesheets, setHistoryTimesheets] = useState<Timesheet[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState<string | null>(null); // projectId being saved
-  const [submitting, setSubmitting] = useState<string | null>(null); // projectId being submitted
+  const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Map<string, string>>(new Map());
 
-  // Generate dates array from start_date to end_date
-  const generateDates = useCallback((startDate: string, endDate: string): string[] => {
+  // Generate all dates in a month
+  const generateMonthDates = useCallback((month: string): string[] => {
+    const [year, monthNum] = month.split('-').map(Number);
+    const firstDay = new Date(year, monthNum - 1, 1);
+    const lastDay = new Date(year, monthNum, 0);
     const dates: string[] = [];
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const current = new Date(start);
+    const current = new Date(firstDay);
 
-    while (current <= end) {
+    while (current <= lastDay) {
       dates.push(current.toISOString().split('T')[0]);
       current.setDate(current.getDate() + 1);
     }
@@ -45,68 +73,93 @@ export function Timesheet() {
     return dates;
   }, []);
 
-  // Fetch projects and timesheets
-  useEffect(() => {
-    if (activeTab === 'active') {
-      fetchActiveTimesheets();
-    } else {
-      fetchHistory();
-    }
-  }, [activeTab, user]);
+  // Check if a date is within project duration
+  const isDateInProjectRange = useCallback((date: string, startDate: string, endDate: string): boolean => {
+    const dateObj = new Date(date);
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    return dateObj >= start && dateObj <= end;
+  }, []);
 
-  const fetchActiveTimesheets = async () => {
+  // Fetch month data
+  const fetchMonthData = useCallback(async (month: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      // Fetch projects where user is a member
-      const projectsResponse = await api.get('/api/timesheets/projects');
-      const projectsList: Project[] = projectsResponse.data.projects || [];
+      const response = await api.get(`/api/timesheets/month?month=${month}`);
+      const data = response.data;
 
-      // Fetch all timesheets for user
-      const timesheetsResponse = await api.get('/api/timesheets');
-      const timesheets: Timesheet[] = timesheetsResponse.data.timesheets || [];
+      if (!data.success) {
+        throw new Error(data.message || 'Failed to load month data');
+      }
 
-      // Combine projects with their timesheets
-      const projectsWithTimesheets: ProjectTimesheetData[] = projectsList.map((project) => {
-        const timesheet = timesheets.find((t) => t.project_id === project.id) || null;
-        const roleName = (project as any).role_name || 'N/A';
-        
-        // Generate dates for this project
-        const dates = generateDates(project.start_date, project.end_date);
-        
-        // Create entries map from timesheet entries
+      const monthProjects: MonthProjectData[] = data.projects || [];
+      const dates = generateMonthDates(month);
+      setMonthDates(dates);
+
+      // Transform to ProjectTimesheetData
+      const projectsData: ProjectTimesheetData[] = monthProjects.map((proj) => {
         const entries = new Map<string, number>();
-        if (timesheet?.entries) {
-          timesheet.entries.forEach((entry: TimesheetEntry) => {
+        
+        // Initialize entries from timesheet
+        if (proj.timesheet?.entries) {
+          proj.timesheet.entries.forEach((entry) => {
             entries.set(entry.date, entry.hours);
           });
         }
 
-        // Initialize empty entries for all dates if no timesheet exists
+        // Initialize all dates in month (only for dates within project range)
         dates.forEach((date) => {
           if (!entries.has(date)) {
-            entries.set(date, 0);
+            // Only set to 0 if date is within project range
+            if (isDateInProjectRange(date, proj.start_date, proj.end_date)) {
+              entries.set(date, 0);
+            }
           }
         });
 
         return {
-          project,
-          roleName,
-          timesheet,
+          project: {
+            id: proj.id,
+            title: proj.title,
+            role_name: proj.role_name,
+            start_date: proj.start_date,
+            end_date: proj.end_date,
+          },
+          roleName: proj.role_name,
+          timesheet: proj.timesheet ? {
+            id: proj.timesheet.id,
+            project_id: proj.id,
+            user_id: user?.id || '',
+            status: proj.timesheet.status,
+            submitted_at: proj.timesheet.submitted_at,
+            approved_at: proj.timesheet.approved_at,
+            created_at: '',
+            updated_at: '',
+            entries: proj.timesheet.entries.map(e => ({
+              id: '',
+              timesheet_id: proj.timesheet!.id,
+              date: e.date,
+              hours: e.hours,
+              created_at: '',
+              updated_at: '',
+            })),
+          } : null,
           entries,
-          dates,
+          hasUnsavedChanges: false,
         };
       });
 
-      setProjects(projectsWithTimesheets);
+      setProjects(projectsData);
     } catch (err: any) {
-      setError(err.message || 'Failed to load timesheets');
+      setError(err.response?.data?.message || err.message || 'Failed to load timesheet data');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, generateMonthDates, isDateInProjectRange]);
 
+  // Fetch history
   const fetchHistory = async () => {
     setLoading(true);
     setError(null);
@@ -119,6 +172,49 @@ export function Timesheet() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Fetch data when tab or month changes
+  useEffect(() => {
+    if (activeTab === 'active') {
+      fetchMonthData(currentMonth);
+    } else {
+      fetchHistory();
+    }
+  }, [activeTab, currentMonth, fetchMonthData]);
+
+  // Navigate to previous month
+  const goToPreviousMonth = () => {
+    const [year, month] = currentMonth.split('-').map(Number);
+    const newDate = new Date(year, month - 2, 1);
+    const newMonth = `${newDate.getFullYear()}-${String(newDate.getMonth() + 1).padStart(2, '0')}`;
+    setCurrentMonth(newMonth);
+  };
+
+  // Navigate to next month
+  const goToNextMonth = () => {
+    const [year, month] = currentMonth.split('-').map(Number);
+    const newDate = new Date(year, month, 1);
+    const newMonth = `${newDate.getFullYear()}-${String(newDate.getMonth() + 1).padStart(2, '0')}`;
+    setCurrentMonth(newMonth);
+  };
+
+  // Format month for display
+  const formatMonthDisplay = (month: string): string => {
+    const [year, monthNum] = month.split('-').map(Number);
+    const date = new Date(year, monthNum - 1, 1);
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  // Format date for display
+  const formatDate = (dateStr: string): string => {
+    return formatDateIST(dateStr, 'MMM dd');
+  };
+
+  // Format day name
+  const formatDayName = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { weekday: 'short' });
   };
 
   // Validate hours per cell (0-24)
@@ -139,7 +235,7 @@ export function Timesheet() {
     });
 
     if (totalHours > 24) {
-      return `Total hours for ${date} exceeds 24 hours (${totalHours.toFixed(2)} hours)`;
+      return `Total hours for ${formatDate(date)} exceeds 24 hours (${totalHours.toFixed(2)} hours)`;
     }
 
     return null;
@@ -152,7 +248,7 @@ export function Timesheet() {
         if (p.project.id === projectId) {
           const newEntries = new Map(p.entries);
           newEntries.set(date, hours);
-          return { ...p, entries: newEntries };
+          return { ...p, entries: newEntries, hasUnsavedChanges: true };
         }
         return p;
       })
@@ -167,134 +263,137 @@ export function Timesheet() {
     });
   };
 
-  // Validate all entries for a project
-  const validateProject = (projectData: ProjectTimesheetData): string[] => {
+  // Validate all projects
+  const validateAllProjects = (): { valid: boolean; errors: string[] } => {
     const errors: string[] = [];
 
-    projectData.dates.forEach((date) => {
-      const hours = projectData.entries.get(date) || 0;
+    projects.forEach((projectData) => {
+      monthDates.forEach((date) => {
+        const hours = projectData.entries.get(date) || 0;
 
-      // Validate cell hours
-      if (!validateCellHours(hours)) {
-        errors.push(`Hours for ${date} must be between 0 and 24`);
-        return;
-      }
+        // Only validate if date is within project range and hours > 0
+        if (isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date)) {
+          // Validate cell hours
+          if (!validateCellHours(hours)) {
+            errors.push(`${projectData.project.title}: Hours for ${formatDate(date)} must be between 0 and 24`);
+            return;
+          }
 
-      // Validate day hours across projects
-      if (hours > 0) {
-        const dayError = validateDayHours(date, projectData.project.id, hours);
-        if (dayError) {
-          errors.push(dayError);
+          // Validate day hours across projects
+          if (hours > 0) {
+            const dayError = validateDayHours(date, projectData.project.id, hours);
+            if (dayError) {
+              errors.push(`${projectData.project.title}: ${dayError}`);
+            }
+          }
         }
-      }
+      });
     });
 
-    return errors;
+    return { valid: errors.length === 0, errors };
   };
 
-  // Save draft
-  const handleSaveDraft = async (projectData: ProjectTimesheetData) => {
-    const errors = validateProject(projectData);
-    if (errors.length > 0) {
-      setError(errors[0]);
+  // Save draft for all projects
+  const handleSaveDraft = async () => {
+    const validation = validateAllProjects();
+    if (!validation.valid) {
+      setError(validation.errors[0]);
       return;
     }
 
-    setSaving(projectData.project.id);
+    setSaving(true);
     setError(null);
 
     try {
-      // Convert entries map to array
-      const entries: DateEntry[] = projectData.dates.map((date) => ({
-        date,
-        hours: projectData.entries.get(date) || 0,
-      }));
+      // Save each project with changes
+      const projectsToSave = projects.filter((p) => p.hasUnsavedChanges || !p.timesheet);
 
-      const response = await api.post('/api/timesheets', {
-        project_id: projectData.project.id,
-        entries,
-      });
+      for (const projectData of projectsToSave) {
+        // Collect entries for dates within project range
+        const entries: DateEntry[] = monthDates
+          .filter((date) => isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date))
+          .map((date) => ({
+            date,
+            hours: projectData.entries.get(date) || 0,
+          }));
 
-      // Update timesheet in state
-      setProjects((prev) =>
-        prev.map((p) => {
-          if (p.project.id === projectData.project.id) {
-            return { ...p, timesheet: response.data.timesheet };
-          }
-          return p;
-        })
-      );
-    } catch (err: any) {
-      setError(err.message || 'Failed to save timesheet');
-    } finally {
-      setSaving(null);
-    }
-  };
-
-  // Submit timesheet
-  const handleSubmit = async (projectData: ProjectTimesheetData) => {
-    const errors = validateProject(projectData);
-    if (errors.length > 0) {
-      setError(errors[0]);
-      return;
-    }
-
-    // Create or get timesheet ID
-    let timesheetId: string;
-    
-    if (!projectData.timesheet) {
-      // No timesheet exists yet - need to create one first
-      // Convert entries map to array
-      const entries: DateEntry[] = projectData.dates.map((date) => ({
-        date,
-        hours: projectData.entries.get(date) || 0,
-      }));
-
-      setSubmitting(projectData.project.id);
-      setError(null);
-
-      try {
-        // Create timesheet first
-        const createResponse = await api.post('/api/timesheets', {
+        await api.post('/api/timesheets', {
           project_id: projectData.project.id,
           entries,
         });
-
-        if (!createResponse.data.success || !createResponse.data.timesheet) {
-          throw new Error('Failed to create timesheet');
-        }
-
-        timesheetId = createResponse.data.timesheet.id;
-      } catch (err: any) {
-        setError(err.response?.data?.message || err.message || 'Failed to create timesheet');
-        setSubmitting(null);
-        return;
       }
-    } else {
-      timesheetId = projectData.timesheet.id;
+
+      // Refresh data
+      await fetchMonthData(currentMonth);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || 'Failed to save timesheet');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Submit all projects
+  const handleSubmit = async () => {
+    const validation = validateAllProjects();
+    if (!validation.valid) {
+      setError(validation.errors[0]);
+      return;
     }
 
-    setSubmitting(projectData.project.id);
+    setSubmitting(true);
     setError(null);
 
     try {
-      // Convert entries map to array for submission
-      const entries: DateEntry[] = projectData.dates.map((date) => ({
-        date,
-        hours: projectData.entries.get(date) || 0,
-      }));
+      // Save and submit each project
+      for (const projectData of projects) {
+        // Collect entries for dates within project range
+        const entries: DateEntry[] = monthDates
+          .filter((date) => isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date))
+          .map((date) => ({
+            date,
+            hours: projectData.entries.get(date) || 0,
+          }));
 
-      // Submit with entries in body (backend will save them if needed)
-      await api.post(`/api/timesheets/${timesheetId}/submit`, {
-        entries,
-      });
+        let timesheetId: string;
 
-      // Refresh timesheets
-      await fetchActiveTimesheets();
+        if (!projectData.timesheet) {
+          // Create timesheet first
+          const createResponse = await api.post('/api/timesheets', {
+            project_id: projectData.project.id,
+            entries,
+          });
+
+          if (!createResponse.data.success || !createResponse.data.timesheet) {
+            throw new Error('Failed to create timesheet');
+          }
+
+          timesheetId = createResponse.data.timesheet.id;
+        } else {
+          timesheetId = projectData.timesheet.id;
+
+          // Update timesheet if it's in DRAFT status
+          if (projectData.timesheet.status === 'DRAFT') {
+            await api.post('/api/timesheets', {
+              project_id: projectData.project.id,
+              entries,
+            });
+          }
+        }
+
+        // Submit timesheet if it's in DRAFT status
+        if (!projectData.timesheet || projectData.timesheet.status === 'DRAFT') {
+          await api.post(`/api/timesheets/${timesheetId}/submit`, {
+            entries,
+          });
+        }
+      }
+
+      // Refresh data
+      await fetchMonthData(currentMonth);
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || 'Failed to submit timesheet');
     } finally {
-      setSubmitting(null);
+      setSubmitting(false);
     }
   };
 
@@ -319,27 +418,6 @@ export function Timesheet() {
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || 'Failed to export timesheet');
     }
-  };
-
-  // Group dates into weeks (for visual grouping)
-  const groupDatesIntoWeeks = (dates: string[]): string[][] => {
-    const weeks: string[][] = [];
-    let currentWeek: string[] = [];
-
-    dates.forEach((date, index) => {
-      currentWeek.push(date);
-      if (currentWeek.length === 7 || index === dates.length - 1) {
-        weeks.push([...currentWeek]);
-        currentWeek = [];
-      }
-    });
-
-    return weeks;
-  };
-
-  // Format date for display (using IST timezone)
-  const formatDate = (dateStr: string): string => {
-    return formatDateIST(dateStr, 'MMM dd');
   };
 
   if (loading) {
@@ -381,200 +459,206 @@ export function Timesheet() {
       )}
 
       {activeTab === 'active' ? (
-        <div className="timesheet-container">
+        <div className="timesheet-month-container">
+          {/* Month Navigation */}
+          <div className="timesheet-month-navigation">
+            <button
+              className="timesheet-month-nav-btn"
+              onClick={goToPreviousMonth}
+              aria-label="Previous month"
+            >
+              ◀ Previous Month
+            </button>
+            <h2 className="timesheet-month-display">{formatMonthDisplay(currentMonth)}</h2>
+            <button
+              className="timesheet-month-nav-btn"
+              onClick={goToNextMonth}
+              aria-label="Next month"
+            >
+              Next Month ▶
+            </button>
+          </div>
+
+          {/* Action Buttons */}
+          {projects.length > 0 && (
+            <div className="timesheet-month-actions">
+              <button
+                className="timesheet-btn timesheet-btn-secondary"
+                onClick={handleSaveDraft}
+                disabled={saving || submitting}
+              >
+                {saving ? 'Saving...' : 'Save Draft'}
+              </button>
+              <button
+                className="timesheet-btn timesheet-btn-primary"
+                onClick={handleSubmit}
+                disabled={saving || submitting}
+              >
+                {submitting ? 'Submitting...' : 'Submit Timesheet'}
+              </button>
+            </div>
+          )}
+
+          {/* Grid Table */}
           {projects.length === 0 ? (
             <div className="page-content">
               <p>No projects assigned. Contact your administrator to be assigned to a project.</p>
             </div>
           ) : (
-            projects.map((projectData) => {
-              const isDraft = !projectData.timesheet || projectData.timesheet.status === 'DRAFT';
-              const isSubmitted = projectData.timesheet?.status === 'SUBMITTED';
-              const isApproved = projectData.timesheet?.status === 'APPROVED';
-              const isReadOnly = isSubmitted || isApproved;
+            <div className="timesheet-grid-container">
+              <table className="timesheet-grid-table">
+                <thead>
+                  <tr>
+                    <th className="timesheet-grid-sticky-col timesheet-grid-project-col">Project</th>
+                    <th className="timesheet-grid-sticky-col timesheet-grid-role-col">Role</th>
+                    {monthDates.map((date) => (
+                      <th key={date} className="timesheet-grid-date-header">
+                        <div className="timesheet-grid-date-name">{formatDayName(date)}</div>
+                        <div className="timesheet-grid-date-number">{formatDate(date)}</div>
+                      </th>
+                    ))}
+                    <th className="timesheet-grid-total-col">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {projects.map((projectData) => {
+                    const isDraft = !projectData.timesheet || projectData.timesheet.status === 'DRAFT';
+                    const isSubmitted = projectData.timesheet?.status === 'SUBMITTED';
+                    const isApproved = projectData.timesheet?.status === 'APPROVED';
+                    const isReadOnly = isSubmitted || isApproved;
 
-              // Calculate total hours
-              const totalHours = Array.from(projectData.entries.values()).reduce(
-                (sum, hours) => sum + hours,
-                0
-              );
+                    // Calculate total hours
+                    const totalHours = Array.from(projectData.entries.values()).reduce(
+                      (sum, hours) => sum + hours,
+                      0
+                    );
 
-              // Group dates into weeks
-              const weeks = groupDatesIntoWeeks(projectData.dates);
+                    return (
+                      <tr key={projectData.project.id}>
+                        <td className="timesheet-grid-sticky-col timesheet-grid-project-col">
+                          <div className="timesheet-grid-project-name">{projectData.project.title}</div>
+                          {projectData.timesheet && (
+                            <div className="timesheet-grid-project-status">
+                              <span
+                                className={`timesheet-status-badge ${
+                                  isDraft
+                                    ? 'draft'
+                                    : isSubmitted
+                                    ? 'submitted'
+                                    : isApproved
+                                    ? 'approved'
+                                    : ''
+                                }`}
+                              >
+                                {projectData.timesheet.status}
+                              </span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="timesheet-grid-sticky-col timesheet-grid-role-col">
+                          {projectData.roleName}
+                        </td>
+                        {monthDates.map((date) => {
+                          const hours = projectData.entries.get(date) || 0;
+                          const errorKey = `${projectData.project.id}-${date}`;
+                          const hasError = validationErrors.has(errorKey);
+                          const isInRange = isDateInProjectRange(
+                            date,
+                            projectData.project.start_date,
+                            projectData.project.end_date
+                          );
+                          const isDisabled = !isInRange || isReadOnly;
 
-              return (
-                <div key={projectData.project.id} className="timesheet-project-block">
-                  <div className="timesheet-project-header">
-                    <div>
-                      <h3>{projectData.project.title}</h3>
-                      <p className="timesheet-project-role">Role: {projectData.roleName}</p>
-                      <p className="timesheet-project-status">
-                        Status:{' '}
-                        <span
-                          className={`timesheet-status-badge ${
-                            isDraft
-                              ? 'draft'
-                              : isSubmitted
-                              ? 'submitted'
-                              : isApproved
-                              ? 'approved'
-                              : ''
-                          }`}
-                        >
-                          {projectData.timesheet?.status || 'DRAFT'}
-                        </span>
-                      </p>
-                    </div>
-                    <div className="timesheet-project-actions">
-                      {isDraft && (
-                        <>
-                          <button
-                            className="timesheet-btn timesheet-btn-secondary"
-                            onClick={() => handleSaveDraft(projectData)}
-                            disabled={saving === projectData.project.id}
-                          >
-                            {saving === projectData.project.id ? 'Saving...' : 'Save Draft'}
-                          </button>
-                          <button
-                            className="timesheet-btn timesheet-btn-primary"
-                            onClick={() => handleSubmit(projectData)}
-                            disabled={submitting === projectData.project.id}
-                          >
-                            {submitting === projectData.project.id ? 'Submitting...' : 'Submit'}
-                          </button>
-                        </>
-                      )}
-                      {isApproved && (
-                        <button
-                          className="timesheet-btn timesheet-btn-primary"
-                          onClick={() => handleExport(projectData.timesheet!)}
-                        >
-                          Export Excel
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                          return (
+                            <td
+                              key={date}
+                              className={`timesheet-grid-cell ${!isInRange ? 'timesheet-grid-cell-disabled' : ''}`}
+                              title={!isInRange ? 'Outside project duration' : ''}
+                            >
+                              {isReadOnly ? (
+                                <span className="timesheet-hours-readonly">{hours || 0}</span>
+                              ) : (
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="24"
+                                  step="0.5"
+                                  value={hours === 0 ? '' : hours}
+                                  disabled={!isInRange}
+                                  onChange={(e) => {
+                                    const inputValue = e.target.value;
 
-                  <div className="timesheet-table-container">
-                    <table className="timesheet-table">
-                      <thead>
-                        <tr>
-                          <th className="timesheet-sticky-col">Project</th>
-                          <th className="timesheet-sticky-col">Role</th>
-                          {weeks.map((week, weekIndex) => (
-                            <th key={weekIndex} colSpan={week.length} className="timesheet-week-header">
-                              Week {weekIndex + 1}
-                            </th>
-                          ))}
-                          <th>Total</th>
-                        </tr>
-                        <tr>
-                          <th className="timesheet-sticky-col"></th>
-                          <th className="timesheet-sticky-col"></th>
-                          {projectData.dates.map((date) => (
-                            <th key={date} className="timesheet-date-header">
-                              {formatDate(date)}
-                            </th>
-                          ))}
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td className="timesheet-sticky-col">{projectData.project.title}</td>
-                          <td className="timesheet-sticky-col">{projectData.roleName}</td>
-                          {projectData.dates.map((date) => {
-                            const hours = projectData.entries.get(date) || 0;
-                            const errorKey = `${projectData.project.id}-${date}`;
-                            const hasError = validationErrors.has(errorKey);
+                                    // Allow empty string during typing
+                                    if (inputValue === '') {
+                                      setValidationErrors((prev) => {
+                                        const newErrors = new Map(prev);
+                                        newErrors.delete(errorKey);
+                                        return newErrors;
+                                      });
+                                      updateHours(projectData.project.id, date, 0);
+                                      return;
+                                    }
 
-                            return (
-                              <td key={date} className="timesheet-cell">
-                                {isReadOnly ? (
-                                  <span className="timesheet-hours-readonly">{hours || 0}</span>
-                                ) : (
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max="24"
-                                    step="0.5"
-                                    value={hours === 0 ? '' : hours}
-                                    onChange={(e) => {
-                                      const inputValue = e.target.value;
-                                      
-                                      // Allow empty string during typing
-                                      if (inputValue === '') {
-                                        // Clear validation error and set to 0
-                                        setValidationErrors((prev) => {
-                                          const newErrors = new Map(prev);
-                                          newErrors.delete(errorKey);
-                                          return newErrors;
-                                        });
-                                        updateHours(projectData.project.id, date, 0);
-                                        return;
-                                      }
-                                      
-                                      const numValue = parseFloat(inputValue);
-                                      
-                                      // Only process if it's a valid number
-                                      if (!isNaN(numValue)) {
-                                        if (validateCellHours(numValue)) {
-                                          const dayError = validateDayHours(
-                                            date,
-                                            projectData.project.id,
-                                            numValue
-                                          );
-                                          if (dayError) {
-                                            setValidationErrors((prev) => {
-                                              const newErrors = new Map(prev);
-                                              newErrors.set(errorKey, dayError);
-                                              return newErrors;
-                                            });
-                                          } else {
-                                            // Clear error and update hours
-                                            setValidationErrors((prev) => {
-                                              const newErrors = new Map(prev);
-                                              newErrors.delete(errorKey);
-                                              return newErrors;
-                                            });
-                                            updateHours(projectData.project.id, date, numValue);
-                                          }
-                                        } else {
+                                    const numValue = parseFloat(inputValue);
+
+                                    // Only process if it's a valid number
+                                    if (!isNaN(numValue)) {
+                                      if (validateCellHours(numValue)) {
+                                        const dayError = validateDayHours(
+                                          date,
+                                          projectData.project.id,
+                                          numValue
+                                        );
+                                        if (dayError) {
                                           setValidationErrors((prev) => {
                                             const newErrors = new Map(prev);
-                                            newErrors.set(errorKey, 'Hours must be between 0 and 24');
+                                            newErrors.set(errorKey, dayError);
                                             return newErrors;
                                           });
+                                        } else {
+                                          // Clear error and update hours
+                                          setValidationErrors((prev) => {
+                                            const newErrors = new Map(prev);
+                                            newErrors.delete(errorKey);
+                                            return newErrors;
+                                          });
+                                          updateHours(projectData.project.id, date, numValue);
                                         }
+                                      } else {
+                                        setValidationErrors((prev) => {
+                                          const newErrors = new Map(prev);
+                                          newErrors.set(errorKey, 'Hours must be between 0 and 24');
+                                          return newErrors;
+                                        });
                                       }
-                                    }}
-                                    onBlur={(e) => {
-                                      // On blur, ensure we have a valid number or 0
-                                      const inputValue = e.target.value;
-                                      if (inputValue === '' || isNaN(parseFloat(inputValue))) {
-                                        updateHours(projectData.project.id, date, 0);
-                                      }
-                                    }}
-                                    className={`timesheet-hours-input ${hasError ? 'error' : ''}`}
-                                    placeholder="0"
-                                  />
-                                )}
-                                {hasError && (
-                                  <div className="timesheet-cell-error">
-                                    {validationErrors.get(errorKey)}
-                                  </div>
-                                )}
-                              </td>
-                            );
-                          })}
-                          <td className="timesheet-total-cell">{totalHours.toFixed(2)}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              );
-            })
+                                    }
+                                  }}
+                                  onBlur={(e) => {
+                                    // On blur, ensure we have a valid number or 0
+                                    const inputValue = e.target.value;
+                                    if (inputValue === '' || isNaN(parseFloat(inputValue))) {
+                                      updateHours(projectData.project.id, date, 0);
+                                    }
+                                  }}
+                                  className={`timesheet-hours-input ${hasError ? 'error' : ''} ${!isInRange ? 'timesheet-hours-input-disabled' : ''}`}
+                                  placeholder="0"
+                                />
+                              )}
+                              {hasError && (
+                                <div className="timesheet-cell-error">
+                                  {validationErrors.get(errorKey)}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="timesheet-grid-total-cell">{totalHours.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       ) : (

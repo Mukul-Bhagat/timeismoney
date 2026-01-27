@@ -212,6 +212,192 @@ router.get('/projects', verifyAuth, async (req: AuthRequest, res: Response) => {
 });
 
 /**
+ * GET /api/timesheets/month?month=YYYY-MM
+ * Get projects and timesheet entries for a specific month
+ */
+router.get('/month', verifyAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const { month } = req.query;
+    
+    if (!month || typeof month !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Month parameter is required (format: YYYY-MM)',
+      });
+    }
+
+    // Validate month format (YYYY-MM)
+    const monthRegex = /^\d{4}-\d{2}$/;
+    if (!monthRegex.test(month)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid month format. Use YYYY-MM (e.g., 2026-01)',
+      });
+    }
+
+    // Parse month to get start and end dates
+    const [year, monthNum] = month.split('-').map(Number);
+    const monthStart = new Date(year, monthNum - 1, 1);
+    const monthEnd = new Date(year, monthNum, 0); // Last day of month
+    
+    const monthStartStr = monthStart.toISOString().split('T')[0]; // YYYY-MM-DD
+    const monthEndStr = monthEnd.toISOString().split('T')[0]; // YYYY-MM-DD
+
+    console.log(`GET /api/timesheets/month: Fetching data for ${month} (${monthStartStr} to ${monthEndStr})`);
+
+    // Step 1: Get project_members for this user
+    const { data: projectMembers, error: membersError } = await supabase
+      .from('project_members')
+      .select('project_id, role_id, user_id')
+      .eq('user_id', req.user.id);
+
+    if (membersError) {
+      console.error('Error fetching project_members:', membersError);
+      throw membersError;
+    }
+
+    if (!projectMembers || projectMembers.length === 0) {
+      return res.json({
+        success: true,
+        month,
+        projects: [],
+      });
+    }
+
+    // Step 2: Get unique project IDs
+    const projectIds = [...new Set(projectMembers.map((pm: any) => pm.project_id))];
+
+    // Step 3: Fetch projects
+    const { data: projects, error: projectsError } = await supabase
+      .from('projects')
+      .select('*')
+      .in('id', projectIds);
+
+    if (projectsError) {
+      console.error('Error fetching projects:', projectsError);
+      throw projectsError;
+    }
+
+    // Step 4: Get role names
+    const roleIds = [...new Set(projectMembers.map((pm: any) => pm.role_id))];
+    const { data: roles, error: rolesError } = await supabase
+      .from('roles')
+      .select('id, name')
+      .in('id', roleIds);
+
+    if (rolesError) {
+      console.error('Error fetching roles:', rolesError);
+      // Don't throw - continue without role names
+    }
+
+    // Create role map
+    const roleMap = new Map();
+    if (roles) {
+      roles.forEach((role: any) => {
+        roleMap.set(role.id, role.name);
+      });
+    }
+
+    // Step 5: Get all timesheets for user
+    const { data: timesheets, error: timesheetsError } = await supabase
+      .from('timesheets')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .in('project_id', projectIds);
+
+    if (timesheetsError) {
+      console.error('Error fetching timesheets:', timesheetsError);
+      throw timesheetsError;
+    }
+
+    // Step 6: Get entries for the month
+    const timesheetIds = (timesheets || []).map((t: any) => t.id).filter((id: any) => id != null);
+    let entries: any[] = [];
+
+    if (timesheetIds.length > 0) {
+      const { data: entriesData, error: entriesError } = await supabase
+        .from('timesheet_entries')
+        .select('*')
+        .in('timesheet_id', timesheetIds)
+        .gte('date', monthStartStr)
+        .lte('date', monthEndStr);
+
+      if (entriesError) {
+        console.error('Error fetching timesheet entries:', entriesError);
+        // Don't throw - continue with empty entries
+      } else {
+        entries = entriesData || [];
+      }
+    }
+
+    // Group entries by timesheet_id
+    const entriesMap = new Map<string, any[]>();
+    entries.forEach((entry: any) => {
+      if (entry && entry.timesheet_id) {
+        if (!entriesMap.has(entry.timesheet_id)) {
+          entriesMap.set(entry.timesheet_id, []);
+        }
+        entriesMap.get(entry.timesheet_id)!.push(entry);
+      }
+    });
+
+    // Step 7: Combine projects with timesheets and entries
+    const projectsWithData = (projects || []).map((project: any) => {
+      // Find project member entry
+      const memberEntry = projectMembers.find((pm: any) => pm.project_id === project.id);
+      const roleName = memberEntry ? (roleMap.get(memberEntry.role_id) || 'N/A') : 'N/A';
+
+      // Find timesheet for this project
+      const timesheet = (timesheets || []).find((t: any) => t.project_id === project.id) || null;
+      
+      // Get entries for this timesheet (filtered to month)
+      const timesheetEntries = timesheet ? (entriesMap.get(timesheet.id) || []) : [];
+
+      return {
+        id: project.id,
+        title: project.title,
+        description: project.description,
+        start_date: project.start_date,
+        end_date: project.end_date,
+        role_name: roleName,
+        timesheet: timesheet ? {
+          id: timesheet.id,
+          status: timesheet.status,
+          submitted_at: timesheet.submitted_at,
+          approved_at: timesheet.approved_at,
+          entries: timesheetEntries.map((e: any) => ({
+            date: e.date,
+            hours: parseFloat(e.hours || 0),
+          })),
+        } : null,
+      };
+    });
+
+    console.log(`GET /api/timesheets/month: Returning ${projectsWithData.length} projects for ${month}`);
+
+    res.json({
+      success: true,
+      month,
+      projects: projectsWithData,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/timesheets/month:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch month timesheet data',
+      error: error.message || 'Unknown error',
+    });
+  }
+});
+
+/**
  * GET /api/timesheets
  * Get all timesheets for current user (with entries)
  */

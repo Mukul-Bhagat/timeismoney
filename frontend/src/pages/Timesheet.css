@@ -44,6 +44,53 @@
   gap: 32px;
 }
 
+/* Month-Wise Container */
+.timesheet-month-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Month Navigation */
+.timesheet-month-navigation {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.timesheet-month-nav-btn {
+  padding: 8px 16px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1e293b;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.timesheet-month-nav-btn:hover {
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+
+.timesheet-month-display {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+/* Month Actions */
+.timesheet-month-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
 /* Project Block */
 .timesheet-project-block {
   background: white;
@@ -278,6 +325,17 @@
   background: #fee2e2;
 }
 
+.timesheet-hours-input-disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.timesheet-hours-input-disabled:focus {
+  border-color: #d1d5db;
+  box-shadow: none;
+}
+
 .timesheet-hours-readonly {
   display: inline-block;
   padding: 6px 8px;
@@ -459,6 +517,286 @@
 
   .timesheet-hours-input {
     max-width: 50px;
+  }
+}
+
+/* Month-Wise Grid Layout */
+.timesheet-grid-container {
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: white;
+}
+
+.timesheet-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.timesheet-grid-table thead {
+  background: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.timesheet-grid-table th {
+  padding: 8px 4px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  border-bottom: 2px solid #e2e8f0;
+  border-right: 1px solid #e2e8f0;
+  vertical-align: middle;
+}
+
+.timesheet-grid-table td {
+  padding: 6px 4px;
+  text-align: center;
+  border-bottom: 1px solid #e2e8f0;
+  border-right: 1px solid #e2e8f0;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+/* Sticky Columns */
+.timesheet-grid-sticky-col {
+  position: sticky;
+  background: white;
+  z-index: 5;
+  text-align: left !important;
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+}
+
+.timesheet-grid-project-col {
+  left: 0;
+  min-width: 180px;
+  max-width: 180px;
+  width: 180px;
+  z-index: 6;
+}
+
+.timesheet-grid-role-col {
+  left: 180px;
+  min-width: 120px;
+  max-width: 120px;
+  width: 120px;
+  z-index: 6;
+}
+
+.timesheet-grid-total-col {
+  min-width: 80px;
+  max-width: 80px;
+  width: 80px;
+  font-weight: 600;
+  background: #f8fafc;
+  border-left: 2px solid #e2e8f0;
+}
+
+.timesheet-grid-table thead .timesheet-grid-sticky-col {
+  background: #f8fafc;
+  z-index: 11;
+}
+
+.timesheet-grid-table thead .timesheet-grid-project-col {
+  z-index: 12;
+}
+
+.timesheet-grid-table thead .timesheet-grid-role-col {
+  z-index: 12;
+}
+
+.timesheet-grid-table tbody tr:hover .timesheet-grid-sticky-col {
+  background: #f8fafc;
+}
+
+/* Date Headers */
+.timesheet-grid-date-header {
+  min-width: 40px;
+  max-width: 40px;
+  width: 40px;
+  padding: 6px 2px !important;
+}
+
+.timesheet-grid-date-name {
+  font-size: 9px;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.timesheet-grid-date-number {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+}
+
+/* Date Cells */
+.timesheet-grid-cell {
+  min-width: 40px;
+  max-width: 40px;
+  width: 40px;
+  padding: 4px 2px !important;
+  position: relative;
+}
+
+.timesheet-grid-cell-disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
+.timesheet-grid-cell-disabled .timesheet-hours-input {
+  background: #f3f4f6;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+/* Project Name in Grid */
+.timesheet-grid-project-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: #1e293b;
+  margin-bottom: 4px;
+}
+
+.timesheet-grid-project-status {
+  margin-top: 4px;
+}
+
+.timesheet-grid-project-status .timesheet-status-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+/* Compact Inputs for Grid */
+.timesheet-grid-cell .timesheet-hours-input {
+  width: 100%;
+  max-width: 36px;
+  min-width: 36px;
+  padding: 4px 2px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.timesheet-grid-cell .timesheet-hours-readonly {
+  font-size: 12px;
+  padding: 4px 2px;
+}
+
+/* Responsive Grid */
+@media (max-width: 1400px) {
+  .timesheet-grid-date-header,
+  .timesheet-grid-cell {
+    min-width: 35px;
+    max-width: 35px;
+    width: 35px;
+  }
+
+  .timesheet-grid-cell .timesheet-hours-input {
+    max-width: 31px;
+    min-width: 31px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .timesheet-grid-project-col {
+    min-width: 150px;
+    max-width: 150px;
+    width: 150px;
+  }
+
+  .timesheet-grid-role-col {
+    left: 150px;
+    min-width: 100px;
+    max-width: 100px;
+    width: 100px;
+  }
+
+  .timesheet-grid-date-header,
+  .timesheet-grid-cell {
+    min-width: 32px;
+    max-width: 32px;
+    width: 32px;
+  }
+
+  .timesheet-grid-cell .timesheet-hours-input {
+    max-width: 28px;
+    min-width: 28px;
+    font-size: 10px;
+    padding: 3px 1px;
+  }
+
+  .timesheet-grid-date-name {
+    font-size: 8px;
+  }
+
+  .timesheet-grid-date-number {
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 768px) {
+  .timesheet-month-navigation {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .timesheet-month-actions {
+    justify-content: stretch;
+  }
+
+  .timesheet-month-actions .timesheet-btn {
+    flex: 1;
+  }
+
+  .timesheet-grid-container {
+    margin: 0 -16px;
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+  }
+
+  .timesheet-grid-project-col {
+    min-width: 120px;
+    max-width: 120px;
+    width: 120px;
+  }
+
+  .timesheet-grid-role-col {
+    left: 120px;
+    min-width: 80px;
+    max-width: 80px;
+    width: 80px;
+  }
+
+  .timesheet-grid-date-header,
+  .timesheet-grid-cell {
+    min-width: 28px;
+    max-width: 28px;
+    width: 28px;
+  }
+
+  .timesheet-grid-cell .timesheet-hours-input {
+    max-width: 24px;
+    min-width: 24px;
+    font-size: 9px;
+    padding: 2px 1px;
+  }
+
+  .timesheet-grid-date-name {
+    display: none;
+  }
+
+  .timesheet-grid-date-number {
+    font-size: 9px;
+  }
+
+  .timesheet-grid-project-name {
+    font-size: 11px;
   }
 }
 
