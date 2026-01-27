@@ -22,6 +22,7 @@ interface MonthProjectData {
     status: 'DRAFT' | 'SUBMITTED' | 'APPROVED';
     submitted_at: string | null;
     approved_at: string | null;
+    approved_by: string | null;
     entries: { date: string; hours: number }[];
   } | null;
 }
@@ -135,6 +136,7 @@ export function Timesheet() {
             status: proj.timesheet.status,
             submitted_at: proj.timesheet.submitted_at,
             approved_at: proj.timesheet.approved_at,
+            approved_by: proj.timesheet.approved_by,
             created_at: '',
             updated_at: '',
             entries: proj.timesheet.entries.map(e => ({

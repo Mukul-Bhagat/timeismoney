@@ -372,6 +372,7 @@ router.get('/month', verifyAuth, async (req: AuthRequest, res: Response) => {
           status: timesheet.status,
           submitted_at: timesheet.submitted_at,
           approved_at: timesheet.approved_at,
+          approved_by: timesheet.approved_by,
           entries: timesheetEntries.map((e: any) => ({
             date: e.date,
             hours: parseFloat(e.hours || 0),

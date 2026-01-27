@@ -197,13 +197,36 @@ export function Approval() {
         throw new Error(response.data.message || 'Failed to approve timesheets');
       }
 
-      alert(`Successfully approved ${response.data.timesheets?.length || 0} timesheet(s)`);
+      const approvedCount = response.data.timesheets?.length || 0;
+      alert(`Successfully approved ${approvedCount} timesheet(s) for this project.`);
       
-      // Refresh projects list and close modal
+      // Refresh project detail to show updated status
+      await fetchProjectDetail(selectedProject.project.id);
+      
+      // Refresh projects list to update submitted counts
       await fetchProjects();
-      handleCloseModal();
     } catch (err: any) {
-      setError(err.response?.data?.message || err.message || 'Failed to approve timesheets');
+      // Show detailed error message
+      const errorMessage = err.response?.data?.error 
+        ? `${err.response.data.message || 'Failed to approve timesheets'}\n\nError: ${err.response.data.error}`
+        : err.response?.data?.message || err.message || 'Failed to approve timesheets';
+      
+      // Check for specific error types
+      if (err.response?.data?.code) {
+        const code = err.response.data.code;
+        if (code === '42501' || err.response.data.message?.includes('RLS') || err.response.data.message?.includes('policy')) {
+          setError('Permission error: Database access denied. Please check RLS policies and service role key configuration.');
+        } else if (err.response.data.message?.includes('column') || err.response.data.message?.includes('approved_by')) {
+          setError('Database schema error: The approved_by column may not exist. Please run the migration_approval_system.sql migration.');
+        } else {
+          setError(errorMessage);
+        }
+      } else {
+        setError(errorMessage);
+      }
+      
+      console.error('[Approval Frontend] Approval error:', err);
+      console.error('[Approval Frontend] Error response:', err.response?.data);
     } finally {
       setApproving(false);
     }

@@ -897,30 +897,109 @@ router.post('/projects/:id/approve', verifyAuth, requireRole('ADMIN', 'MANAGER')
     const timesheetIds = submittedTimesheets.map(t => t.id);
     const now = getCurrentUTC().toISOString();
 
+    // Log detailed information before update
+    console.log(`[Approval] ===== STARTING APPROVAL PROCESS =====`);
+    console.log(`[Approval] Project ID: ${id}`);
+    console.log(`[Approval] Approving user ID: ${req.user.id}`);
+    console.log(`[Approval] Timesheet IDs to approve: ${JSON.stringify(timesheetIds)}`);
+    console.log(`[Approval] Number of timesheets: ${timesheetIds.length}`);
+    console.log(`[Approval] Approval timestamp: ${now}`);
+
+    // Verify timesheets exist and are in SUBMITTED status before updating
+    if (timesheetIds.length === 0) {
+      console.error('[Approval] No timesheet IDs to approve');
+      return res.status(400).json({
+        success: false,
+        message: 'No timesheets to approve',
+      });
+    }
+
+    // Check each timesheet exists and is SUBMITTED
+    const { data: verifyTimesheets, error: verifyError } = await supabase
+      .from('timesheets')
+      .select('id, status, user_id')
+      .in('id', timesheetIds);
+
+    if (verifyError) {
+      console.error('[Approval] Error verifying timesheets:', verifyError);
+      throw verifyError;
+    }
+
+    if (!verifyTimesheets || verifyTimesheets.length !== timesheetIds.length) {
+      console.error(`[Approval] Timesheet count mismatch. Expected: ${timesheetIds.length}, Found: ${verifyTimesheets?.length || 0}`);
+      const foundIds = verifyTimesheets?.map((t: any) => t.id) || [];
+      const missingIds = timesheetIds.filter(id => !foundIds.includes(id));
+      console.error(`[Approval] Missing timesheet IDs: ${JSON.stringify(missingIds)}`);
+    }
+
+    // Verify all are SUBMITTED
+    const nonSubmitted = verifyTimesheets?.filter((t: any) => t.status !== 'SUBMITTED') || [];
+    if (nonSubmitted.length > 0) {
+      console.error(`[Approval] Found ${nonSubmitted.length} timesheet(s) not in SUBMITTED status:`, nonSubmitted);
+      return res.status(400).json({
+        success: false,
+        message: `Cannot approve: ${nonSubmitted.length} timesheet(s) are not in SUBMITTED status`,
+        invalid_timesheets: nonSubmitted.map((t: any) => ({ id: t.id, status: t.status })),
+      });
+    }
+
+    console.log(`[Approval] All ${timesheetIds.length} timesheet(s) verified as SUBMITTED. Proceeding with update...`);
+
     // Update all timesheets to APPROVED
-    console.log(`[Approval] Approving ${timesheetIds.length} timesheet(s) for project ${id}`);
+    console.log(`[Approval] Executing update query...`);
+    const updateData = {
+      status: 'APPROVED',
+      approved_at: now,
+      approved_by: req.user.id,
+      updated_at: now,
+    };
+    console.log(`[Approval] Update data:`, JSON.stringify(updateData, null, 2));
+
     const { data: updatedTimesheets, error: updateError } = await supabase
       .from('timesheets')
-      .update({
-        status: 'APPROVED',
-        approved_at: now,
-        approved_by: req.user.id,
-        updated_at: now,
-      })
+      .update(updateData)
       .in('id', timesheetIds)
       .select();
 
     if (updateError) {
-      console.error('[Approval] Error updating timesheets:', updateError);
+      console.error('[Approval] ===== UPDATE ERROR =====');
+      console.error('[Approval] Error code:', updateError.code);
+      console.error('[Approval] Error message:', updateError.message);
+      console.error('[Approval] Error details:', JSON.stringify(updateError, null, 2));
+      console.error('[Approval] Error hint:', updateError.hint);
+      console.error('[Approval] =========================');
+      
+      // Check if it's a column error
+      if (updateError.message?.includes('column') || updateError.message?.includes('approved_by')) {
+        return res.status(500).json({
+          success: false,
+          message: 'Database schema error: approved_by column may not exist. Please run migration_approval_system.sql',
+          error: updateError.message,
+          code: updateError.code,
+        });
+      }
+      
       throw updateError;
     }
 
-    console.log(`[Approval] Successfully approved ${updatedTimesheets?.length || 0} timesheet(s)`);
-    if (updatedTimesheets) {
-      updatedTimesheets.forEach((t: any) => {
-        console.log(`[Approval] Timesheet ${t.id} approved for user ${t.user_id}, status: ${t.status}, approved_at: ${t.approved_at}`);
+    if (!updatedTimesheets || updatedTimesheets.length === 0) {
+      console.error('[Approval] Update returned no rows. This might indicate RLS policy blocking the update.');
+      return res.status(500).json({
+        success: false,
+        message: 'Update operation returned no rows. This may indicate a permissions issue or RLS policy conflict.',
+        error: 'No timesheets were updated',
       });
     }
+
+    console.log(`[Approval] ===== APPROVAL SUCCESS =====`);
+    console.log(`[Approval] Successfully approved ${updatedTimesheets.length} timesheet(s)`);
+    updatedTimesheets.forEach((t: any) => {
+      console.log(`[Approval] ✓ Timesheet ${t.id} approved for user ${t.user_id}`);
+      console.log(`[Approval]   - Status: ${t.status}`);
+      console.log(`[Approval]   - Approved at: ${t.approved_at}`);
+      console.log(`[Approval]   - Approved by: ${t.approved_by}`);
+    });
+    console.log(`[Approval] ============================`);
 
     res.json({
       success: true,
@@ -928,10 +1007,28 @@ router.post('/projects/:id/approve', verifyAuth, requireRole('ADMIN', 'MANAGER')
       timesheets: updatedTimesheets,
     });
   } catch (error: any) {
+    console.error('[Approval] ===== UNEXPECTED ERROR =====');
+    console.error('[Approval] Error type:', error?.constructor?.name);
+    console.error('[Approval] Error message:', error?.message);
+    console.error('[Approval] Error stack:', error?.stack);
+    if (error?.code) {
+      console.error('[Approval] Error code:', error.code);
+    }
+    if (error?.details) {
+      console.error('[Approval] Error details:', error.details);
+    }
+    if (error?.hint) {
+      console.error('[Approval] Error hint:', error.hint);
+    }
+    console.error('[Approval] Full error object:', JSON.stringify(error, null, 2));
+    console.error('[Approval] ============================');
+
     res.status(500).json({
       success: false,
       message: 'Failed to approve timesheets',
-      error: error.message,
+      error: error?.message || 'Unknown error occurred',
+      code: error?.code,
+      details: error?.details,
     });
   }
 });
