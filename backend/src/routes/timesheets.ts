@@ -7,6 +7,30 @@ import * as XLSX from 'xlsx';
 const router = Router();
 
 /**
+ * Convert month string (YYYY-MM) to first-of-month YYYY-MM-DD.
+ */
+function monthParamToMonthStart(month: string): { monthStartStr: string; monthEndStr: string } {
+  const monthRegex = /^\d{4}-\d{2}$/;
+  if (!monthRegex.test(month)) {
+    throw new Error('Invalid month format. Use YYYY-MM (e.g., 2026-01)');
+  }
+  const [year, monthNum] = month.split('-').map(Number);
+  const monthStart = new Date(year, monthNum - 1, 1);
+  const monthEnd = new Date(year, monthNum, 0);
+  const monthStartStr = monthStart.toISOString().split('T')[0];
+  const monthEndStr = monthEnd.toISOString().split('T')[0];
+  return { monthStartStr, monthEndStr };
+}
+
+/**
+ * Attempt a query that uses timesheets.month; fall back if column doesn't exist.
+ */
+function isMissingMonthColumnError(error: any): boolean {
+  const msg = (error?.message || '').toLowerCase();
+  return msg.includes('month') && (msg.includes('column') || msg.includes('does not exist'));
+}
+
+/**
  * Helper function to check if user is SUPER_ADMIN
  */
 async function isSuperAdmin(userId: string): Promise<boolean> {
@@ -233,22 +257,16 @@ router.get('/month', verifyAuth, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Validate month format (YYYY-MM)
-    const monthRegex = /^\d{4}-\d{2}$/;
-    if (!monthRegex.test(month)) {
+    let monthStartStr: string;
+    let monthEndStr: string;
+    try {
+      ({ monthStartStr, monthEndStr } = monthParamToMonthStart(month));
+    } catch (e: any) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid month format. Use YYYY-MM (e.g., 2026-01)',
+        message: e?.message || 'Invalid month format. Use YYYY-MM (e.g., 2026-01)',
       });
     }
-
-    // Parse month to get start and end dates
-    const [year, monthNum] = month.split('-').map(Number);
-    const monthStart = new Date(year, monthNum - 1, 1);
-    const monthEnd = new Date(year, monthNum, 0); // Last day of month
-    
-    const monthStartStr = monthStart.toISOString().split('T')[0]; // YYYY-MM-DD
-    const monthEndStr = monthEnd.toISOString().split('T')[0]; // YYYY-MM-DD
 
     console.log(`GET /api/timesheets/month: Fetching data for ${month} (${monthStartStr} to ${monthEndStr})`);
 
@@ -305,12 +323,31 @@ router.get('/month', verifyAuth, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Step 5: Get all timesheets for user
-    const { data: timesheets, error: timesheetsError } = await supabase
+    // Step 5: Get timesheets for user, scoped to month if supported
+    let timesheets: any[] | null = null;
+    let timesheetsError: any = null;
+
+    // Prefer month-scoped query (monthly timesheets)
+    const monthScoped = await supabase
       .from('timesheets')
       .select('*')
       .eq('user_id', req.user.id)
-      .in('project_id', projectIds);
+      .in('project_id', projectIds)
+      .eq('month', monthStartStr);
+
+    if (monthScoped.error && isMissingMonthColumnError(monthScoped.error)) {
+      // Backward-compatible fallback (legacy timesheets: one per project/user)
+      const legacy = await supabase
+        .from('timesheets')
+        .select('*')
+        .eq('user_id', req.user.id)
+        .in('project_id', projectIds);
+      timesheets = legacy.data;
+      timesheetsError = legacy.error;
+    } else {
+      timesheets = monthScoped.data;
+      timesheetsError = monthScoped.error;
+    }
 
     if (timesheetsError) {
       console.error('Error fetching timesheets:', timesheetsError);
@@ -354,7 +391,7 @@ router.get('/month', verifyAuth, async (req: AuthRequest, res: Response) => {
       const memberEntry = projectMembers.find((pm: any) => pm.project_id === project.id);
       const roleName = memberEntry ? (roleMap.get(memberEntry.role_id) || 'N/A') : 'N/A';
 
-      // Find timesheet for this project
+      // Find timesheet for this project (month-scoped if available)
       const timesheet = (timesheets || []).find((t: any) => t.project_id === project.id) || null;
       
       // Get entries for this timesheet (filtered to month)
@@ -798,7 +835,7 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const { project_id, entries } = req.body;
+    const { project_id, entries, month } = req.body;
 
     if (!project_id) {
       return res.status(400).json({
@@ -812,6 +849,26 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
         success: false,
         message: 'entries must be an array',
       });
+    }
+
+    // Determine month bucket (first day of month) for monthly timesheets.
+    // Prefer explicit month=YYYY-MM from client; otherwise infer from first entry date; otherwise use current month.
+    let monthStartStr: string | null = null;
+    try {
+      if (month && typeof month === 'string') {
+        ({ monthStartStr } = monthParamToMonthStart(month));
+      } else if (entries.length > 0 && entries[0]?.date) {
+        const d = new Date(String(entries[0].date));
+        const inferred = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+        ({ monthStartStr } = monthParamToMonthStart(inferred));
+      } else {
+        const now = new Date();
+        const inferred = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+        ({ monthStartStr } = monthParamToMonthStart(inferred));
+      }
+    } catch (e) {
+      // If month parsing fails, keep monthStartStr null (legacy behavior will still work).
+      monthStartStr = null;
     }
 
     // Check if user is assigned to project
@@ -867,13 +924,42 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Get or create timesheet
-    const { data: existingTimesheet, error: fetchError } = await supabase
-      .from('timesheets')
-      .select('id, status')
-      .eq('project_id', project_id)
-      .eq('user_id', req.user.id)
-      .single();
+    // Get or create timesheet (month-scoped if supported)
+    let existingTimesheet: any = null;
+    let fetchError: any = null;
+
+    if (monthStartStr) {
+      const monthScoped = await supabase
+        .from('timesheets')
+        .select('id, status')
+        .eq('project_id', project_id)
+        .eq('user_id', req.user.id)
+        .eq('month', monthStartStr)
+        .single();
+
+      if (monthScoped.error && isMissingMonthColumnError(monthScoped.error)) {
+        const legacy = await supabase
+          .from('timesheets')
+          .select('id, status')
+          .eq('project_id', project_id)
+          .eq('user_id', req.user.id)
+          .single();
+        existingTimesheet = legacy.data;
+        fetchError = legacy.error;
+      } else {
+        existingTimesheet = monthScoped.data;
+        fetchError = monthScoped.error;
+      }
+    } else {
+      const legacy = await supabase
+        .from('timesheets')
+        .select('id, status')
+        .eq('project_id', project_id)
+        .eq('user_id', req.user.id)
+        .single();
+      existingTimesheet = legacy.data;
+      fetchError = legacy.error;
+    }
 
     if (fetchError && fetchError.code !== 'PGRST116') {
       throw fetchError;
@@ -882,11 +968,11 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
     let timesheetId: string;
 
     if (existingTimesheet) {
-      // Check if timesheet is in DRAFT status
-      if (existingTimesheet.status !== 'DRAFT') {
+      // Check if timesheet is editable
+      if (!['DRAFT', 'REJECTED', 'RESUBMITTED'].includes(existingTimesheet.status)) {
         return res.status(400).json({
           success: false,
-          message: 'Cannot update timesheet that is not in DRAFT status',
+          message: `Cannot update timesheet that is not editable (status: ${existingTimesheet.status})`,
         });
       }
 
@@ -895,21 +981,50 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       // Update timesheet updated_at
       await supabase
         .from('timesheets')
-        .update({ updated_at: getCurrentUTC().toISOString() })
+        .update({
+          updated_at: getCurrentUTC().toISOString(),
+          ...(monthStartStr ? { month: monthStartStr } : {}),
+        })
         .eq('id', timesheetId);
     } else {
       // Create new timesheet
-      const { data: newTimesheet, error: createError } = await supabase
+      const insertPayload: any = {
+        project_id,
+        user_id: req.user.id,
+        status: 'DRAFT',
+        created_at: getCurrentUTC().toISOString(),
+        updated_at: getCurrentUTC().toISOString(),
+        ...(monthStartStr ? { month: monthStartStr } : {}),
+      };
+
+      let newTimesheet: any = null;
+      let createError: any = null;
+
+      const created = await supabase
         .from('timesheets')
-        .insert({
-          project_id,
-          user_id: req.user.id,
-          status: 'DRAFT',
-          created_at: getCurrentUTC().toISOString(),
-          updated_at: getCurrentUTC().toISOString(),
-        })
+        .insert(insertPayload)
         .select('id')
         .single();
+
+      newTimesheet = created.data;
+      createError = created.error;
+
+      if (createError && isMissingMonthColumnError(createError)) {
+        // Retry without month field (legacy schema)
+        const legacyCreated = await supabase
+          .from('timesheets')
+          .insert({
+            project_id,
+            user_id: req.user.id,
+            status: 'DRAFT',
+            created_at: getCurrentUTC().toISOString(),
+            updated_at: getCurrentUTC().toISOString(),
+          })
+          .select('id')
+          .single();
+        newTimesheet = legacyCreated.data;
+        createError = legacyCreated.error;
+      }
 
       if (createError || !newTimesheet) {
         throw createError || new Error('Failed to create timesheet');
