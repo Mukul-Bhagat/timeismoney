@@ -274,6 +274,7 @@ router.get('/projects', verifyAuth, requireRole('ADMIN', 'MANAGER'), async (req:
         start_date,
         end_date,
         status,
+        project_logo_url,
         created_at
       `);
 

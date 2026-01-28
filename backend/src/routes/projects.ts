@@ -135,6 +135,7 @@ router.get('/', verifyAuth, async (req: AuthRequest, res: Response) => {
         project_manager_1_id,
         project_manager_2_id,
         setup_status,
+        project_logo_url,
         created_at,
         project_manager_1:project_manager_1_id(id, email),
         project_manager_2:project_manager_2_id(id, email)

@@ -966,10 +966,35 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
     }
 
     let timesheetId: string;
+    let shouldAutoUnlock = false;
 
     if (existingTimesheet) {
       // Check if timesheet is editable
-      if (!['DRAFT', 'REJECTED', 'RESUBMITTED'].includes(existingTimesheet.status)) {
+      const isEditableStatus = ['DRAFT', 'REJECTED', 'RESUBMITTED'].includes(existingTimesheet.status);
+      
+      // If timesheet is SUBMITTED or APPROVED, check if entries contain future dates
+      if (!isEditableStatus && (existingTimesheet.status === 'SUBMITTED' || existingTimesheet.status === 'APPROVED')) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        // Check if any entry is for a future date
+        const hasFutureDates = entries.some((entry: any) => {
+          const entryDate = new Date(entry.date);
+          entryDate.setHours(0, 0, 0, 0);
+          return entryDate > today;
+        });
+        
+        if (hasFutureDates) {
+          // Auto-unlock timesheet for future dates
+          shouldAutoUnlock = true;
+          console.log(`[Timesheet Save] Auto-unlocking timesheet ${existingTimesheet.id} due to future date entries`);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: `Cannot update timesheet that is not editable (status: ${existingTimesheet.status}). Use Edit Timesheet button to modify past dates.`,
+          });
+        }
+      } else if (!isEditableStatus) {
         return res.status(400).json({
           success: false,
           message: `Cannot update timesheet that is not editable (status: ${existingTimesheet.status})`,
@@ -978,13 +1003,20 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
 
       timesheetId = existingTimesheet.id;
 
-      // Update timesheet updated_at
+      // Update timesheet - auto-unlock if needed
+      const updateData: any = {
+        updated_at: getCurrentUTC().toISOString(),
+        ...(monthStartStr ? { month: monthStartStr } : {}),
+      };
+      
+      if (shouldAutoUnlock) {
+        updateData.status = 'RESUBMITTED';
+        console.log(`[Timesheet Save] Changing status to RESUBMITTED for timesheet ${timesheetId}`);
+      }
+
       await supabase
         .from('timesheets')
-        .update({
-          updated_at: getCurrentUTC().toISOString(),
-          ...(monthStartStr ? { month: monthStartStr } : {}),
-        })
+        .update(updateData)
         .eq('id', timesheetId);
     } else {
       // Create new timesheet
@@ -1055,51 +1087,45 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
     // Delete existing entries
     await supabase.from('timesheet_entries').delete().eq('timesheet_id', timesheetId);
 
-    // Insert new entries
+    // Insert new entries - only entries with hours > 0
     if (entries.length > 0) {
-      const entriesToInsert = entries.map((entry: any) => {
-        // Normalize date to YYYY-MM-DD format (remove time component if present)
-        const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
-        const hours = parseFloat(entry.hours) || 0;
-        
-        console.log(`[Timesheet Save] Entry: date=${entry.date} -> normalized=${normalizedDate}, hours=${hours}`);
-        
-        return {
-          timesheet_id: timesheetId,
-          date: normalizedDate,
-          hours: hours,
-          created_at: getCurrentUTC().toISOString(),
-          updated_at: getCurrentUTC().toISOString(),
-        };
-      });
+      const entriesToInsert = entries
+        .map((entry: any) => {
+          // Normalize date to YYYY-MM-DD format (remove time component if present)
+          const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
+          const hours = parseFloat(entry.hours) || 0;
+          
+          console.log(`[Timesheet Save] Entry: date=${entry.date} -> normalized=${normalizedDate}, hours=${hours}`);
+          
+          return {
+            timesheet_id: timesheetId,
+            date: normalizedDate,
+            hours: hours,
+            created_at: getCurrentUTC().toISOString(),
+            updated_at: getCurrentUTC().toISOString(),
+          };
+        })
+        .filter((e: any) => e.hours > 0); // Only include entries with hours > 0
 
-      console.log(`[Timesheet Save] Inserting ${entriesToInsert.length} entries for timesheet ${timesheetId}`);
+      console.log(`[Timesheet Save] Inserting ${entriesToInsert.length} entries (filtered from ${entries.length} total) for timesheet ${timesheetId}`);
       
-      // Log entries with hours > 0 for debugging
-      const entriesWithHours = entriesToInsert.filter(e => e.hours > 0);
-      if (entriesWithHours.length > 0) {
-        console.log(`[Timesheet Save] ${entriesWithHours.length} entries with hours > 0:`, 
-          entriesWithHours.slice(0, 5).map(e => `${e.date}: ${e.hours}h`));
+      if (entriesToInsert.length > 0) {
+        console.log(`[Timesheet Save] Entries with hours > 0:`, 
+          entriesToInsert.slice(0, 5).map((e: any) => `${e.date}: ${e.hours}h`));
+        
+        const { data: insertedEntries, error: insertError } = await supabase
+          .from('timesheet_entries')
+          .insert(entriesToInsert)
+          .select();
+
+        if (insertError) {
+          console.error('[Timesheet Save] Error inserting entries:', insertError);
+          throw insertError;
+        }
+        
+        console.log(`[Timesheet Save] Successfully inserted ${insertedEntries?.length || 0} entries`);
       } else {
-        console.log(`[Timesheet Save] WARNING: All entries have 0 hours!`);
-      }
-      
-      const { data: insertedEntries, error: insertError } = await supabase
-        .from('timesheet_entries')
-        .insert(entriesToInsert)
-        .select();
-
-      if (insertError) {
-        console.error('[Timesheet Save] Error inserting entries:', insertError);
-        throw insertError;
-      }
-      
-      console.log(`[Timesheet Save] Successfully inserted ${insertedEntries?.length || 0} entries`);
-      
-      // Verify inserted entries
-      if (insertedEntries && insertedEntries.length > 0) {
-        const verifiedWithHours = insertedEntries.filter((e: any) => parseFloat(e.hours) > 0);
-        console.log(`[Timesheet Save] Verified: ${verifiedWithHours.length} entries with hours > 0 in database`);
+        console.log(`[Timesheet Save] No entries with hours > 0 to insert for timesheet ${timesheetId}`);
       }
     } else {
       console.log(`[Timesheet Save] No entries to insert for timesheet ${timesheetId}`);
@@ -1129,6 +1155,126 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       success: false,
       message: 'Failed to save timesheet',
       error: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/timesheets/:id/edit
+ * Unlock timesheet for editing (changes status from SUBMITTED/APPROVED to RESUBMITTED)
+ */
+router.post('/:id/edit', verifyAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const { id: idParam } = req.params;
+    const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+    // Get timesheet
+    const { data: timesheet, error: fetchError } = await supabase
+      .from('timesheets')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !timesheet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Timesheet not found',
+      });
+    }
+
+    // Check if user owns this timesheet
+    if (timesheet.user_id !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'You can only edit your own timesheets',
+      });
+    }
+
+    // Check if timesheet is in SUBMITTED or APPROVED status
+    if (timesheet.status !== 'SUBMITTED' && timesheet.status !== 'APPROVED') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot edit timesheet with status ${timesheet.status}. Only SUBMITTED or APPROVED timesheets can be edited.`,
+      });
+    }
+
+    // Update timesheet status to RESUBMITTED
+    console.log(`[Edit Timesheet] Attempting to update timesheet ${id} from ${timesheet.status} to RESUBMITTED`);
+    console.log(`[Edit Timesheet] User ID: ${req.user.id}, Timesheet User ID: ${timesheet.user_id}`);
+    console.log(`[Edit Timesheet] Project ID: ${timesheet.project_id}`);
+
+    const { data: updatedTimesheet, error: updateError } = await supabase
+      .from('timesheets')
+      .update({
+        status: 'RESUBMITTED',
+        updated_at: getCurrentUTC().toISOString(),
+      })
+      .eq('id', id)
+      .select(`
+        *,
+        entries:timesheet_entries(*)
+      `)
+      .single();
+
+    if (updateError) {
+      console.error('[Edit Timesheet] Update error details:');
+      console.error('  Error code:', updateError.code);
+      console.error('  Error message:', updateError.message);
+      console.error('  Error details:', updateError.details);
+      console.error('  Error hint:', updateError.hint);
+      console.error('  Full error:', JSON.stringify(updateError, null, 2));
+      
+      // Check if it's an RLS policy error
+      if (updateError.code === '42501' || updateError.message?.includes('policy') || updateError.message?.includes('RLS')) {
+        return res.status(500).json({
+          success: false,
+          message: 'Database policy error. Please ensure migration_fix_edit_timesheet_rls.sql has been run in Supabase SQL Editor.',
+          error: updateError.message,
+          code: updateError.code,
+          details: updateError.details,
+          hint: updateError.hint,
+        });
+      }
+      
+      throw updateError;
+    }
+
+    console.log(`[Edit Timesheet] Successfully updated timesheet ${id} to RESUBMITTED`);
+
+    res.json({
+      success: true,
+      message: 'Timesheet unlocked for editing',
+      timesheet: updatedTimesheet,
+    });
+  } catch (error: any) {
+    console.error('[Edit Timesheet] Unexpected error:', error);
+    console.error('  Error type:', error?.constructor?.name);
+    console.error('  Error message:', error?.message);
+    console.error('  Error stack:', error?.stack);
+    if (error?.code) {
+      console.error('  Error code:', error.code);
+    }
+    if (error?.details) {
+      console.error('  Error details:', error.details);
+    }
+    if (error?.hint) {
+      console.error('  Error hint:', error.hint);
+    }
+    console.error('  Full error object:', JSON.stringify(error, null, 2));
+
+    res.status(500).json({
+      success: false,
+      message: 'Failed to unlock timesheet for editing',
+      error: error?.message || 'Unknown error occurred',
+      code: error?.code,
+      details: error?.details,
     });
   }
 });
@@ -1173,11 +1319,11 @@ router.post('/:id/submit', verifyAuth, async (req: AuthRequest, res: Response) =
       });
     }
 
-    // Check if timesheet is in DRAFT status
-    if (timesheet.status !== 'DRAFT') {
+    // Check if timesheet is in DRAFT or RESUBMITTED status
+    if (timesheet.status !== 'DRAFT' && timesheet.status !== 'RESUBMITTED') {
       return res.status(400).json({
         success: false,
-        message: `Cannot submit timesheet with status ${timesheet.status}`,
+        message: `Cannot submit timesheet with status ${timesheet.status}. Only DRAFT or RESUBMITTED timesheets can be submitted.`,
       });
     }
 
@@ -1243,41 +1389,41 @@ router.post('/:id/submit', verifyAuth, async (req: AuthRequest, res: Response) =
       // Delete existing entries
       await supabase.from('timesheet_entries').delete().eq('timesheet_id', id);
 
-      // Insert new entries
-      const entriesToInsert = entriesFromBody.map((entry: any) => {
-        // Normalize date to YYYY-MM-DD format (remove time component if present)
-        const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
-        const hours = parseFloat(entry.hours || 0);
-        
-        console.log(`[Timesheet Submit] Entry: date=${entry.date} -> normalized=${normalizedDate}, hours=${hours}`);
-        
-        return {
-          timesheet_id: id,
-          date: normalizedDate,
-          hours: hours,
-          created_at: getCurrentUTC().toISOString(),
-          updated_at: getCurrentUTC().toISOString(),
-        };
-      });
+      // Insert new entries - only entries with hours > 0
+      const entriesToInsert = entriesFromBody
+        .map((entry: any) => {
+          // Normalize date to YYYY-MM-DD format (remove time component if present)
+          const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
+          const hours = parseFloat(entry.hours || 0);
+          
+          console.log(`[Timesheet Submit] Entry: date=${entry.date} -> normalized=${normalizedDate}, hours=${hours}`);
+          
+          return {
+            timesheet_id: id,
+            date: normalizedDate,
+            hours: hours,
+            created_at: getCurrentUTC().toISOString(),
+            updated_at: getCurrentUTC().toISOString(),
+          };
+        })
+        .filter((e: any) => e.hours > 0); // Only include entries with hours > 0
 
-      console.log(`[Timesheet Submit] Inserting ${entriesToInsert.length} entries for timesheet ${id}`);
+      console.log(`[Timesheet Submit] Inserting ${entriesToInsert.length} entries (filtered from ${entriesFromBody.length} total) for timesheet ${id}`);
       
-      const { data: insertedEntries, error: insertError } = await supabase
-        .from('timesheet_entries')
-        .insert(entriesToInsert)
-        .select();
+      if (entriesToInsert.length > 0) {
+        const { data: insertedEntries, error: insertError } = await supabase
+          .from('timesheet_entries')
+          .insert(entriesToInsert)
+          .select();
 
-      if (insertError) {
-        console.error('[Timesheet Submit] Error inserting entries:', insertError);
-        throw insertError;
-      }
-      
-      console.log(`[Timesheet Submit] Successfully inserted ${insertedEntries?.length || 0} entries`);
-      
-      // Verify inserted entries
-      if (insertedEntries && insertedEntries.length > 0) {
-        const verifiedWithHours = insertedEntries.filter((e: any) => parseFloat(e.hours) > 0);
-        console.log(`[Timesheet Submit] Verified: ${verifiedWithHours.length} entries with hours > 0 in database`);
+        if (insertError) {
+          console.error('[Timesheet Submit] Error inserting entries:', insertError);
+          throw insertError;
+        }
+        
+        console.log(`[Timesheet Submit] Successfully inserted ${insertedEntries?.length || 0} entries`);
+      } else {
+        console.log(`[Timesheet Submit] No entries with hours > 0 to insert for timesheet ${id}`);
       }
     }
 
