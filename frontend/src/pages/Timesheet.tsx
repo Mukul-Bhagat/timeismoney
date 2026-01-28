@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import { ProjectBrand } from '../components/common/ProjectBrand';
-import type { Timesheet, TimesheetEntry } from '../types';
+import type { Timesheet, TimesheetEntry, TimesheetStatus } from '../types';
 import { formatDateIST } from '../utils/timezone';
 import './Page.css';
 import './Timesheet.css';
