@@ -311,13 +311,14 @@ export function Timesheet() {
       const projectsToSave = projects.filter((p) => p.hasUnsavedChanges || !p.timesheet);
 
       for (const projectData of projectsToSave) {
-        // Collect entries for dates within project range
+        // Collect entries for dates within project range, only including entries with hours > 0
         const entries: DateEntry[] = monthDates
           .filter((date) => isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date))
           .map((date) => ({
             date,
             hours: projectData.entries.get(date) || 0,
-          }));
+          }))
+          .filter((entry) => entry.hours > 0); // Only include entries with hours > 0
 
         await api.post('/api/timesheets', {
           project_id: projectData.project.id,
@@ -348,13 +349,14 @@ export function Timesheet() {
     try {
       // Save and submit each project
       for (const projectData of projects) {
-        // Collect entries for dates within project range
+        // Collect entries for dates within project range, only including entries with hours > 0
         const entries: DateEntry[] = monthDates
           .filter((date) => isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date))
           .map((date) => ({
             date,
             hours: projectData.entries.get(date) || 0,
-          }));
+          }))
+          .filter((entry) => entry.hours > 0); // Only include entries with hours > 0
 
         let timesheetId: string;
 
