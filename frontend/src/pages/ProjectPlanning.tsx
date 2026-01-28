@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../config/api';
+import { ProjectBrand } from '../components/common/ProjectBrand';
 import { ProjectPlanningSection } from '../components/projects/ProjectPlanningSection';
 import './ProjectPlanning.css';
 
@@ -89,7 +90,14 @@ export function ProjectPlanning() {
             ← Back to Projects
           </button>
           <div>
-            <h1>Cost Planning: {project.title}</h1>
+            <h1>
+              Cost Planning:{' '}
+              <ProjectBrand
+                name={project.title}
+                logoUrl={project.project_logo_url}
+                size={48}
+              />
+            </h1>
             {project.setup_status && (
               <span
                 className={`planning-status-badge ${

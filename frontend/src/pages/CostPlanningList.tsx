@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../config/api';
+import { ProjectBrand } from '../components/common/ProjectBrand';
 import type { ProjectWithSetup } from '../types';
 import './Page.css';
 import '../components/projects/Projects.css';
@@ -140,9 +141,11 @@ export function CostPlanningList() {
             >
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#111827', margin: 0 }}>
-                    {project.title}
-                  </h3>
+                  <ProjectBrand
+                    name={project.title}
+                    logoUrl={project.project_logo_url}
+                    size={32}
+                  />
                   {getSetupStatusBadge(project.setup_status)}
                 </div>
                 <div style={{ fontSize: '14px', color: '#6b7280' }}>

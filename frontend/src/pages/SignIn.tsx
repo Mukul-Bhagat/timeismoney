@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { AppBrand } from '../components/common/AppBrand';
 import './SignIn.css';
+
+const APP_LOGO_URL = 'https://hixsfzxeglblylasnnfq.supabase.co/storage/v1/object/public/project-logos/project_logo.png';
 
 export function SignIn() {
   const [email, setEmail] = useState('');
@@ -25,7 +28,9 @@ export function SignIn() {
   return (
     <div className="signin-container">
       <div className="signin-card">
-        <h1 className="signin-title">TimeIsMoney</h1>
+        <div className="signin-logo-container">
+          <AppBrand logoUrl={APP_LOGO_URL} size={200} />
+        </div>
         <p className="signin-subtitle">Sign in to your account</p>
 
         <form onSubmit={handleSubmit} className="signin-form">

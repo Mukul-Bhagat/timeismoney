@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../config/api';
+import { ProjectBrand } from '../components/common/ProjectBrand';
 import type {
   ProjectSetupData,
   ProjectRoleAllocation,
@@ -316,7 +317,14 @@ export function ProjectSetup() {
     <div className="project-setup-container">
       {/* Header Card */}
       <div className="project-setup-header">
-        <h1 className="project-setup-header-title">Project Cost Planning: {project.title}</h1>
+        <h1 className="project-setup-header-title">
+          Project Cost Planning:{' '}
+          <ProjectBrand
+            name={project.title}
+            logoUrl={project.project_logo_url}
+            size={48}
+          />
+        </h1>
         <div className="project-setup-header-info">
           <div className="project-setup-header-info-item">
             <span className="project-setup-header-info-label">Project Period</span>

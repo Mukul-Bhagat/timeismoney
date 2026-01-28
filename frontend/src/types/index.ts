@@ -64,6 +64,7 @@ export interface Project {
     id: string;
     email: string;
   };
+  project_logo_url?: string; // Public URL to project logo in Supabase Storage
 }
 
 // Project member interface
@@ -90,7 +91,7 @@ export interface ProjectWithMembers extends Project {
 }
 
 // Timesheet status type
-export type TimesheetStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED';
+export type TimesheetStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'RESUBMITTED';
 
 // Timesheet entry interface
 export interface TimesheetEntry {

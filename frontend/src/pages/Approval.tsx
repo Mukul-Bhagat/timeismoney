@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../config/api';
 import { useAuth } from '../context/AuthContext';
+import { ProjectBrand } from '../components/common/ProjectBrand';
 import type { ProjectWithSubmittedTimesheets, ProjectApprovalData, ProjectApprovalRow } from '../types';
 import { formatDate, calculateTotalHoursFromRows, calculateTotalPlannedHours, getDifferenceColor } from '../utils/approval';
 import { formatDateIST } from '../utils/timezone';
@@ -369,7 +370,11 @@ export function Approval() {
               className="approval-project-card"
               onClick={() => handleProjectClick(project.id)}
             >
-              <h3>{project.title}</h3>
+              <ProjectBrand
+                name={project.title}
+                logoUrl={project.project_logo_url}
+                size={32}
+              />
               <p>{project.description || 'No description'}</p>
               <div className="approval-project-meta">
                 <span className="approval-submitted-badge">
@@ -390,7 +395,11 @@ export function Approval() {
           <div className="approval-modal" onClick={(e) => e.stopPropagation()}>
             <div className="approval-modal-header">
               <div>
-                <h2>{selectedProject.project.title}</h2>
+                <ProjectBrand
+                  name={selectedProject.project.title}
+                  logoUrl={selectedProject.project.project_logo_url}
+                  size={48}
+                />
                 <p style={{ margin: '4px 0', fontSize: '14px', color: '#64748b' }}>
                   {formatDateIST(selectedProject.project.start_date, 'MMM dd, yyyy')} - {formatDateIST(selectedProject.project.end_date, 'MMM dd, yyyy')}
                 </p>

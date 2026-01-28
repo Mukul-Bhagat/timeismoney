@@ -1,4 +1,5 @@
 import { colors } from '../../config/colors';
+import { ProjectBrand } from '../common/ProjectBrand';
 import './Projects.css';
 import type { Project } from '../../types';
 
@@ -40,7 +41,14 @@ export function ProjectCard({ project, onClick }: ProjectCardProps) {
         e.currentTarget.style.boxShadow = 'none';
       }}
     >
-      <h3 className="project-card-title">{project.title}</h3>
+      <div className="project-card-title">
+        <ProjectBrand
+          name={project.title}
+          logoUrl={project.project_logo_url}
+          size={48}
+          onClick={onClick}
+        />
+      </div>
       
       {project.description && (
         <p className="project-card-description">

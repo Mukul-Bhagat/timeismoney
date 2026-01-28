@@ -1,7 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getPagesForRole } from '../config/routes';
+import { AppBrand } from './common/AppBrand';
 import './Sidebar.css';
+
+const APP_LOGO_URL = 'https://hixsfzxeglblylasnnfq.supabase.co/storage/v1/object/public/project-logos/project_logo.png';
 
 export function Sidebar() {
   const { user, signOut } = useAuth();
@@ -20,7 +23,7 @@ export function Sidebar() {
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <h1 className="sidebar-logo">TimeIsMoney</h1>
+        <AppBrand logoUrl={APP_LOGO_URL} size={120} />
       </div>
 
       <nav className="sidebar-nav">

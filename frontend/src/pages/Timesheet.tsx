@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../config/api';
 import { useAuth } from '../context/AuthContext';
+import { ProjectBrand } from '../components/common/ProjectBrand';
 import type { Timesheet, TimesheetEntry } from '../types';
 import { formatDateIST } from '../utils/timezone';
 import './Page.css';
@@ -19,7 +20,7 @@ interface MonthProjectData {
   end_date: string;
   timesheet: {
     id: string;
-    status: 'DRAFT' | 'SUBMITTED' | 'APPROVED';
+    status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'RESUBMITTED';
     submitted_at: string | null;
     approved_at: string | null;
     approved_by: string | null;
@@ -37,8 +38,9 @@ interface ProjectTimesheetData {
   };
   roleName: string;
   timesheet: Timesheet | null;
-  entries: Map<string, number>; // date -> hours
+  entries: Map<string, number | undefined>; // date -> hours (undefined for empty)
   hasUnsavedChanges: boolean;
+  isEditing: boolean; // Track if timesheet is in edit mode
 }
 
 export function Timesheet() {
@@ -82,6 +84,15 @@ export function Timesheet() {
     return dateObj >= start && dateObj <= end;
   }, []);
 
+  // Check if a date is in the future (after today)
+  const isDateInFuture = useCallback((date: string): boolean => {
+    const dateObj = new Date(date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    dateObj.setHours(0, 0, 0, 0);
+    return dateObj > today;
+  }, []);
+
   // Fetch month data
   const fetchMonthData = useCallback(async (month: string) => {
     setLoading(true);
@@ -101,24 +112,23 @@ export function Timesheet() {
 
       // Transform to ProjectTimesheetData
       const projectsData: ProjectTimesheetData[] = monthProjects.map((proj) => {
-        const entries = new Map<string, number>();
+        const entries = new Map<string, number | undefined>();
         
-        // Initialize entries from timesheet
+        // Initialize entries from timesheet (only entries with hours > 0)
         if (proj.timesheet?.entries) {
           proj.timesheet.entries.forEach((entry) => {
-            entries.set(entry.date, entry.hours);
+            if (entry.hours > 0) {
+              entries.set(entry.date, entry.hours);
+            }
           });
         }
 
-        // Initialize all dates in month (only for dates within project range)
-        dates.forEach((date) => {
-          if (!entries.has(date)) {
-            // Only set to 0 if date is within project range
-            if (isDateInProjectRange(date, proj.start_date, proj.end_date)) {
-              entries.set(date, 0);
-            }
-          }
-        });
+        // Don't initialize empty dates - keep them undefined
+        // This allows empty cells to stay empty
+
+        const isResubmitted = proj.timesheet?.status === 'RESUBMITTED';
+        const isDraft = !proj.timesheet || proj.timesheet.status === 'DRAFT';
+        const isRejected = proj.timesheet?.status === 'REJECTED';
 
         return {
           project: {
@@ -150,6 +160,7 @@ export function Timesheet() {
           } : null,
           entries,
           hasUnsavedChanges: false,
+          isEditing: isDraft || isRejected || isResubmitted, // Editable if draft, rejected, or resubmitted
         };
       });
 
@@ -244,12 +255,17 @@ export function Timesheet() {
   };
 
   // Update hours for a specific date in a project
-  const updateHours = (projectId: string, date: string, hours: number) => {
+  const updateHours = (projectId: string, date: string, hours: number | undefined) => {
     setProjects((prev) =>
       prev.map((p) => {
         if (p.project.id === projectId) {
           const newEntries = new Map(p.entries);
-          newEntries.set(date, hours);
+          // Set to undefined if hours is 0 or empty, otherwise set the value
+          if (hours === 0 || hours === undefined || isNaN(hours)) {
+            newEntries.delete(date); // Remove entry to keep it empty
+          } else {
+            newEntries.set(date, hours);
+          }
           return { ...p, entries: newEntries, hasUnsavedChanges: true };
         }
         return p;
@@ -271,10 +287,10 @@ export function Timesheet() {
 
     projects.forEach((projectData) => {
       monthDates.forEach((date) => {
-        const hours = projectData.entries.get(date) || 0;
+        const hours = projectData.entries.get(date);
 
-        // Only validate if date is within project range and hours > 0
-        if (isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date)) {
+        // Only validate if date is within project range and has hours defined
+        if (isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date) && hours !== undefined) {
           // Validate cell hours
           if (!validateCellHours(hours)) {
             errors.push(`${projectData.project.title}: Hours for ${formatDate(date)} must be between 0 and 24`);
@@ -314,16 +330,46 @@ export function Timesheet() {
         // Collect entries for dates within project range, only including entries with hours > 0
         const entries: DateEntry[] = monthDates
           .filter((date) => isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date))
-          .map((date) => ({
-            date,
-            hours: projectData.entries.get(date) || 0,
-          }))
+          .map((date) => {
+            const hours = projectData.entries.get(date);
+            return { date, hours: hours || 0 };
+          })
           .filter((entry) => entry.hours > 0); // Only include entries with hours > 0
 
-        await api.post('/api/timesheets', {
+        // Check if we're saving future dates on a SUBMITTED/APPROVED timesheet
+        const isSubmittedOrApproved = projectData.timesheet?.status === 'SUBMITTED' || projectData.timesheet?.status === 'APPROVED';
+        const hasFutureDates = entries.some((entry) => isDateInFuture(entry.date));
+        
+        if (isSubmittedOrApproved && hasFutureDates) {
+          // Backend will auto-unlock the timesheet (change to RESUBMITTED)
+          // This allows saving future dates even when timesheet is SUBMITTED/APPROVED
+          console.log(`[Save Draft] Saving future dates on ${projectData.timesheet?.status} timesheet - will auto-unlock`);
+        }
+
+        const response = await api.post('/api/timesheets', {
           project_id: projectData.project.id,
           entries,
+          month: currentMonth,
         });
+
+        // If timesheet was auto-unlocked, update local state
+        if (isSubmittedOrApproved && hasFutureDates && response.data.timesheet?.status === 'RESUBMITTED') {
+          setProjects((prev) =>
+            prev.map((p) => {
+              if (p.project.id === projectData.project.id && p.timesheet?.id === response.data.timesheet.id) {
+                return {
+                  ...p,
+                  isEditing: true,
+                  timesheet: {
+                    ...p.timesheet,
+                    status: 'RESUBMITTED',
+                  },
+                };
+              }
+              return p;
+            })
+          );
+        }
       }
 
       // Refresh data
@@ -352,10 +398,10 @@ export function Timesheet() {
         // Collect entries for dates within project range, only including entries with hours > 0
         const entries: DateEntry[] = monthDates
           .filter((date) => isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date))
-          .map((date) => ({
-            date,
-            hours: projectData.entries.get(date) || 0,
-          }))
+          .map((date) => {
+            const hours = projectData.entries.get(date);
+            return { date, hours: hours || 0 };
+          })
           .filter((entry) => entry.hours > 0); // Only include entries with hours > 0
 
         let timesheetId: string;
@@ -365,6 +411,7 @@ export function Timesheet() {
           const createResponse = await api.post('/api/timesheets', {
             project_id: projectData.project.id,
             entries,
+            month: currentMonth,
           });
 
           if (!createResponse.data.success || !createResponse.data.timesheet) {
@@ -375,17 +422,19 @@ export function Timesheet() {
         } else {
           timesheetId = projectData.timesheet.id;
 
-          // Update timesheet if it's in DRAFT status
-          if (projectData.timesheet.status === 'DRAFT') {
+          // Update timesheet if it's editable (DRAFT, REJECTED, or RESUBMITTED)
+          const editableStatuses = ['DRAFT', 'REJECTED', 'RESUBMITTED'];
+          if (projectData.timesheet.status && editableStatuses.includes(projectData.timesheet.status)) {
             await api.post('/api/timesheets', {
               project_id: projectData.project.id,
               entries,
+              month: currentMonth,
             });
           }
         }
 
-        // Submit timesheet if it's in DRAFT status
-        if (!projectData.timesheet || projectData.timesheet.status === 'DRAFT') {
+        // Submit timesheet if it's in DRAFT or RESUBMITTED status
+        if (!projectData.timesheet || projectData.timesheet.status === 'DRAFT' || projectData.timesheet.status === 'RESUBMITTED') {
           await api.post(`/api/timesheets/${timesheetId}/submit`, {
             entries,
           });
@@ -398,6 +447,47 @@ export function Timesheet() {
       setError(err.response?.data?.message || err.message || 'Failed to submit timesheet');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Handle edit timesheet
+  const handleEditTimesheet = async (timesheetId: string, projectId: string) => {
+    try {
+      console.log(`[Edit Timesheet] Attempting to unlock timesheet ${timesheetId} for project ${projectId}`);
+      const response = await api.post(`/api/timesheets/${timesheetId}/edit`);
+
+      if (!response.data.success) {
+        throw new Error(response.data.message || 'Failed to unlock timesheet for editing');
+      }
+
+      console.log(`[Edit Timesheet] Successfully unlocked timesheet ${timesheetId}, new status: ${response.data.timesheet?.status}`);
+
+      // Update project state to enable editing
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.project.id === projectId && p.timesheet?.id === timesheetId) {
+            return {
+              ...p,
+              isEditing: true,
+              timesheet: response.data.timesheet ? {
+                ...p.timesheet,
+                status: response.data.timesheet.status,
+              } : p.timesheet,
+            };
+          }
+          return p;
+        })
+      );
+
+      // Refresh data to ensure we have the latest timesheet state
+      await fetchMonthData(currentMonth);
+    } catch (err: any) {
+      console.error('[Edit Timesheet] Frontend error:', err);
+      console.error('  Response data:', err.response?.data);
+      console.error('  Error message:', err.message);
+      
+      const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to unlock timesheet for editing';
+      setError(errorMessage);
     }
   };
 
@@ -529,18 +619,26 @@ export function Timesheet() {
                     const isDraft = !projectData.timesheet || projectData.timesheet.status === 'DRAFT';
                     const isSubmitted = projectData.timesheet?.status === 'SUBMITTED';
                     const isApproved = projectData.timesheet?.status === 'APPROVED';
-                    const isReadOnly = isSubmitted || isApproved;
+                    const isRejected = projectData.timesheet?.status === 'REJECTED';
+                    const isResubmitted = projectData.timesheet?.status === 'RESUBMITTED';
+                    // Note: Read-only logic is now date-based, determined per cell below
 
-                    // Calculate total hours
+                    // Calculate total hours (only count defined values)
                     const totalHours = Array.from(projectData.entries.values()).reduce(
-                      (sum, hours) => sum + hours,
+                      (sum, hours) => sum + (hours !== undefined ? hours : 0),
                       0
                     );
 
                     return (
                       <tr key={projectData.project.id}>
                         <td className="timesheet-grid-sticky-col timesheet-grid-project-col">
-                          <div className="timesheet-grid-project-name">{projectData.project.title}</div>
+                          <div className="timesheet-grid-project-name">
+                            <ProjectBrand
+                              name={projectData.project.title}
+                              logoUrl={projectData.project.project_logo_url}
+                              size={32}
+                            />
+                          </div>
                           {projectData.timesheet && (
                             <div className="timesheet-grid-project-status">
                               <span
@@ -551,11 +649,24 @@ export function Timesheet() {
                                     ? 'submitted'
                                     : isApproved
                                     ? 'approved'
+                                    : isRejected
+                                    ? 'rejected'
+                                    : isResubmitted
+                                    ? 'resubmitted'
                                     : ''
                                 }`}
                               >
                                 {projectData.timesheet.status}
                               </span>
+                              {(isSubmitted || isApproved) && !projectData.isEditing && (
+                                <button
+                                  className="timesheet-btn timesheet-btn-secondary"
+                                  style={{ marginTop: '8px', fontSize: '11px', padding: '4px 8px' }}
+                                  onClick={() => handleEditTimesheet(projectData.timesheet!.id, projectData.project.id)}
+                                >
+                                  Edit Timesheet
+                                </button>
+                              )}
                             </div>
                           )}
                         </td>
@@ -563,7 +674,7 @@ export function Timesheet() {
                           {projectData.roleName}
                         </td>
                         {monthDates.map((date) => {
-                          const hours = projectData.entries.get(date) || 0;
+                          const hours = projectData.entries.get(date);
                           const errorKey = `${projectData.project.id}-${date}`;
                           const hasError = validationErrors.has(errorKey);
                           const isInRange = isDateInProjectRange(
@@ -572,21 +683,32 @@ export function Timesheet() {
                             projectData.project.end_date
                           );
 
+                          // Date-based read-only logic:
+                          // - Future dates are always editable (even when SUBMITTED/APPROVED)
+                          // - Past dates are read-only when SUBMITTED/APPROVED AND not in edit mode
+                          // - Otherwise editable
+                          const dateIsFuture = isDateInFuture(date);
+                          const dateIsPast = !dateIsFuture;
+                          const shouldBeReadOnly = 
+                            dateIsPast && 
+                            (isSubmitted || isApproved) && 
+                            !projectData.isEditing;
+
                           return (
                             <td
                               key={date}
                               className={`timesheet-grid-cell ${!isInRange ? 'timesheet-grid-cell-disabled' : ''}`}
                               title={!isInRange ? 'Outside project duration' : ''}
                             >
-                              {isReadOnly ? (
-                                <span className="timesheet-hours-readonly">{hours || 0}</span>
+                              {shouldBeReadOnly ? (
+                                <span className="timesheet-hours-readonly">{hours !== undefined ? hours : ''}</span>
                               ) : (
                                 <input
                                   type="number"
                                   min="0"
                                   max="24"
                                   step="0.5"
-                                  value={hours === 0 ? '' : hours}
+                                  value={hours !== undefined ? hours : ''}
                                   disabled={!isInRange}
                                   onChange={(e) => {
                                     const inputValue = e.target.value;
@@ -598,7 +720,7 @@ export function Timesheet() {
                                         newErrors.delete(errorKey);
                                         return newErrors;
                                       });
-                                      updateHours(projectData.project.id, date, 0);
+                                      updateHours(projectData.project.id, date, undefined);
                                       return;
                                     }
 
@@ -637,14 +759,14 @@ export function Timesheet() {
                                     }
                                   }}
                                   onBlur={(e) => {
-                                    // On blur, ensure we have a valid number or 0
+                                    // On blur, if empty, keep it empty (don't default to 0)
                                     const inputValue = e.target.value;
                                     if (inputValue === '' || isNaN(parseFloat(inputValue))) {
-                                      updateHours(projectData.project.id, date, 0);
+                                      updateHours(projectData.project.id, date, undefined);
                                     }
                                   }}
                                   className={`timesheet-hours-input ${hasError ? 'error' : ''} ${!isInRange ? 'timesheet-hours-input-disabled' : ''}`}
-                                  placeholder="0"
+                                  placeholder=""
                                 />
                               )}
                               {hasError && (

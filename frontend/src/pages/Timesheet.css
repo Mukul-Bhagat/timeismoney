@@ -152,6 +152,16 @@
   color: #065f46;
 }
 
+.timesheet-status-badge.rejected {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.timesheet-status-badge.resubmitted {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .timesheet-project-actions {
   display: flex;
   gap: 12px;
@@ -312,6 +322,17 @@
   text-align: center;
   font-size: 14px;
   transition: all 0.2s;
+}
+
+/* Hide number input arrows */
+.timesheet-hours-input[type="number"]::-webkit-inner-spin-button,
+.timesheet-hours-input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.timesheet-hours-input[type="number"] {
+  -moz-appearance: textfield;
 }
 
 .timesheet-hours-input:focus {

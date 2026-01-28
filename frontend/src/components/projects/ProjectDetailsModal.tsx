@@ -2,6 +2,7 @@ import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../config/api';
 import { colors } from '../../config/colors';
+import { ProjectBrand } from '../common/ProjectBrand';
 import type { ProjectWithMembers, ProjectMember, Role } from '../../types';
 import { ProjectPlanningSection } from './ProjectPlanningSection';
 import { ProjectReportsSection } from './ProjectReportsSection';
@@ -894,7 +895,11 @@ export function ProjectDetailsModal({
               {activeTab === 'overview' && (
                 <div>
                   <div style={{ marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', color: colors.text.primary }}>{project.title}</h3>
+                    <ProjectBrand
+                      name={project.title}
+                      logoUrl={project.project_logo_url}
+                      size={64}
+                    />
                     {project.description && (
                       <p style={{ margin: '0 0 16px 0', color: colors.text.secondary }}>
                         {project.description}
