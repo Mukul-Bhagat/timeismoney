@@ -35,6 +35,7 @@ interface ProjectTimesheetData {
     role_name: string;
     start_date: string;
     end_date: string;
+    project_logo_url?: string; // Project logo URL
   };
   roleName: string;
   timesheet: Timesheet | null;
@@ -137,6 +138,7 @@ export function Timesheet() {
             role_name: proj.role_name,
             start_date: proj.start_date,
             end_date: proj.end_date,
+            project_logo_url: (proj as any).project_logo_url, // Include logo URL if available
           },
           roleName: proj.role_name,
           timesheet: proj.timesheet ? {
@@ -353,17 +355,19 @@ export function Timesheet() {
         });
 
         // If timesheet was auto-unlocked, update local state
-        if (isSubmittedOrApproved && hasFutureDates && response.data.timesheet?.status === 'RESUBMITTED') {
+        if (isSubmittedOrApproved && hasFutureDates && response.data.timesheet?.status === 'RESUBMITTED' && response.data.timesheet?.id) {
+          const updatedTimesheetId = response.data.timesheet.id;
           setProjects((prev) =>
             prev.map((p) => {
-              if (p.project.id === projectData.project.id && p.timesheet?.id === response.data.timesheet.id) {
+              if (p.project.id === projectData.project.id && p.timesheet?.id === updatedTimesheetId) {
                 return {
                   ...p,
                   isEditing: true,
-                  timesheet: {
+                  timesheet: p.timesheet ? {
                     ...p.timesheet,
-                    status: 'RESUBMITTED',
-                  },
+                    id: updatedTimesheetId,
+                    status: 'RESUBMITTED' as TimesheetStatus,
+                  } : null,
                 };
               }
               return p;
@@ -463,21 +467,24 @@ export function Timesheet() {
       console.log(`[Edit Timesheet] Successfully unlocked timesheet ${timesheetId}, new status: ${response.data.timesheet?.status}`);
 
       // Update project state to enable editing
-      setProjects((prev) =>
-        prev.map((p) => {
-          if (p.project.id === projectId && p.timesheet?.id === timesheetId) {
-            return {
-              ...p,
-              isEditing: true,
-              timesheet: response.data.timesheet ? {
-                ...p.timesheet,
-                status: response.data.timesheet.status,
-              } : p.timesheet,
-            };
-          }
-          return p;
-        })
-      );
+      if (response.data.timesheet) {
+        setProjects((prev) =>
+          prev.map((p) => {
+            if (p.project.id === projectId && p.timesheet?.id === timesheetId) {
+              return {
+                ...p,
+                isEditing: true,
+                timesheet: p.timesheet ? {
+                  ...p.timesheet,
+                  id: response.data.timesheet.id,
+                  status: response.data.timesheet.status,
+                } : null,
+              };
+            }
+            return p;
+          })
+        );
+      }
 
       // Refresh data to ensure we have the latest timesheet state
       await fetchMonthData(currentMonth);
@@ -624,8 +631,8 @@ export function Timesheet() {
                     // Note: Read-only logic is now date-based, determined per cell below
 
                     // Calculate total hours (only count defined values)
-                    const totalHours = Array.from(projectData.entries.values()).reduce(
-                      (sum, hours) => sum + (hours !== undefined ? hours : 0),
+                    const totalHours: number = Array.from(projectData.entries.values()).reduce(
+                      (sum: number, hours: number | undefined) => sum + (hours !== undefined ? hours : 0),
                       0
                     );
 

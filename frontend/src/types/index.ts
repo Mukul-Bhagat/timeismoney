@@ -165,6 +165,7 @@ export interface ProjectApprovalData {
     start_date: string;
     end_date: string;
     status: ProjectStatus;
+    project_logo_url?: string; // Project logo URL
   };
   date_range: string[];
   approval_rows: ProjectApprovalRow[];
