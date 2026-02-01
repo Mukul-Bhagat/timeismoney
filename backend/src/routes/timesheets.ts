@@ -1084,35 +1084,108 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Delete existing entries
-    await supabase.from('timesheet_entries').delete().eq('timesheet_id', timesheetId);
-
-    // Insert new entries - only entries with hours > 0
-    if (entries.length > 0) {
-      const entriesToInsert = entries
-        .map((entry: any) => {
-          // Normalize date to YYYY-MM-DD format (remove time component if present)
-          const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
-          const hours = parseFloat(entry.hours) || 0;
-          
-          console.log(`[Timesheet Save] Entry: date=${entry.date} -> normalized=${normalizedDate}, hours=${hours}`);
-          
-          return {
-            timesheet_id: timesheetId,
-            date: normalizedDate,
-            hours: hours,
-            created_at: getCurrentUTC().toISOString(),
-            updated_at: getCurrentUTC().toISOString(),
-          };
-        })
-        .filter((e: any) => e.hours > 0); // Only include entries with hours > 0
-
-      console.log(`[Timesheet Save] Inserting ${entriesToInsert.length} entries (filtered from ${entries.length} total) for timesheet ${timesheetId}`);
+    // Upsert logic: Process each entry individually
+    // - If hours > 0: Insert or update the entry
+    // - If hours === 0 or undefined: Delete the entry (if it exists)
+    // - Entries not mentioned in payload are preserved
+    
+    console.log(`[Timesheet Save] Processing ${entries.length} entries for timesheet ${timesheetId}`);
+    
+    const entriesToUpsert: any[] = [];
+    const datesToDelete: string[] = [];
+    
+    for (const entry of entries) {
+      // Normalize date to YYYY-MM-DD format (remove time component if present)
+      const normalizedDate = entry.date ? entry.date.split('T')[0] : entry.date;
+      const hours = parseFloat(entry.hours) || 0;
       
+      console.log(`[Timesheet Save] Processing entry: date=${normalizedDate}, hours=${hours}`);
+      
+      if (hours > 0) {
+        // This entry should be inserted or updated
+        entriesToUpsert.push({
+          timesheet_id: timesheetId,
+          date: normalizedDate,
+          hours: hours,
+          created_at: getCurrentUTC().toISOString(),
+          updated_at: getCurrentUTC().toISOString(),
+        });
+      } else {
+        // hours === 0 means explicitly clear this cell
+        datesToDelete.push(normalizedDate);
+      }
+    }
+    
+    // Delete entries that are explicitly set to 0
+    if (datesToDelete.length > 0) {
+      console.log(`[Timesheet Save] Deleting ${datesToDelete.length} entries with hours = 0`);
+      const { error: deleteError } = await supabase
+        .from('timesheet_entries')
+        .delete()
+        .eq('timesheet_id', timesheetId)
+        .in('date', datesToDelete);
+      
+      if (deleteError) {
+        console.error('[Timesheet Save] Error deleting entries:', deleteError);
+        throw deleteError;
+      }
+    }
+    
+    // Upsert entries with hours > 0
+    if (entriesToUpsert.length > 0) {
+      console.log(`[Timesheet Save] Upserting ${entriesToUpsert.length} entries with hours > 0`);
+      console.log(`[Timesheet Save] Sample entries:`, 
+        entriesToUpsert.slice(0, 5).map((e: any) => `${e.date}: ${e.hours}h`));
+      
+      // First, get existing entries to determine which to update vs insert
+      const { data: existingEntries } = await supabase
+        .from('timesheet_entries')
+        .select('id, date')
+        .eq('timesheet_id', timesheetId);
+      
+      const existingDatesMap = new Map(
+        (existingEntries || []).map((e: any) => [e.date, e.id])
+      );
+      
+      const entriesToInsert: any[] = [];
+      const entriesToUpdate: Array<{ id: string; data: any }> = [];
+      
+      for (const entry of entriesToUpsert) {
+        const existingId = existingDatesMap.get(entry.date);
+        if (existingId) {
+          // Update existing entry
+          entriesToUpdate.push({
+            id: existingId,
+            data: {
+              hours: entry.hours,
+              updated_at: entry.updated_at,
+            }
+          });
+        } else {
+          // Insert new entry
+          entriesToInsert.push(entry);
+        }
+      }
+      
+      // Perform updates
+      if (entriesToUpdate.length > 0) {
+        console.log(`[Timesheet Save] Updating ${entriesToUpdate.length} existing entries`);
+        for (const { id, data } of entriesToUpdate) {
+          const { error: updateError } = await supabase
+            .from('timesheet_entries')
+            .update(data)
+            .eq('id', id);
+          
+          if (updateError) {
+            console.error('[Timesheet Save] Error updating entry:', updateError);
+            throw updateError;
+          }
+        }
+      }
+      
+      // Perform inserts
       if (entriesToInsert.length > 0) {
-        console.log(`[Timesheet Save] Entries with hours > 0:`, 
-          entriesToInsert.slice(0, 5).map((e: any) => `${e.date}: ${e.hours}h`));
-        
+        console.log(`[Timesheet Save] Inserting ${entriesToInsert.length} new entries`);
         const { data: insertedEntries, error: insertError } = await supabase
           .from('timesheet_entries')
           .insert(entriesToInsert)
@@ -1124,11 +1197,11 @@ router.post('/', verifyAuth, async (req: AuthRequest, res: Response) => {
         }
         
         console.log(`[Timesheet Save] Successfully inserted ${insertedEntries?.length || 0} entries`);
-      } else {
-        console.log(`[Timesheet Save] No entries with hours > 0 to insert for timesheet ${timesheetId}`);
       }
+      
+      console.log(`[Timesheet Save] Upsert complete: ${entriesToUpdate.length} updated, ${entriesToInsert.length} inserted`);
     } else {
-      console.log(`[Timesheet Save] No entries to insert for timesheet ${timesheetId}`);
+      console.log(`[Timesheet Save] No entries with hours > 0 to upsert for timesheet ${timesheetId}`);
     }
 
     // Fetch updated timesheet with entries

@@ -114,7 +114,7 @@ export function Timesheet() {
       // Transform to ProjectTimesheetData
       const projectsData: ProjectTimesheetData[] = monthProjects.map((proj) => {
         const entries = new Map<string, number | undefined>();
-        
+
         // Initialize entries from timesheet (only entries with hours > 0)
         if (proj.timesheet?.entries) {
           proj.timesheet.entries.forEach((entry) => {
@@ -329,19 +329,25 @@ export function Timesheet() {
       const projectsToSave = projects.filter((p) => p.hasUnsavedChanges || !p.timesheet);
 
       for (const projectData of projectsToSave) {
-        // Collect entries for dates within project range, only including entries with hours > 0
+        // Collect ALL entries for dates within project range
+        // Include entries with hours > 0 (to save) AND entries with hours === 0 (to explicitly delete)
+        // The backend upsert logic will handle preservation of entries not mentioned
         const entries: DateEntry[] = monthDates
           .filter((date) => isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date))
           .map((date) => {
             const hours = projectData.entries.get(date);
-            return { date, hours: hours || 0 };
+            return { date, hours: hours !== undefined ? hours : 0 };
           })
-          .filter((entry) => entry.hours > 0); // Only include entries with hours > 0
+          .filter((entry) => entry.hours !== undefined); // Include all defined entries (both > 0 and === 0)
+
+        console.log(`[Save Draft] Sending ${entries.length} entries for project ${projectData.project.title}`);
+        console.log(`[Save Draft] Entries with hours > 0: ${entries.filter(e => e.hours > 0).length}`);
+        console.log(`[Save Draft] Entries with hours === 0: ${entries.filter(e => e.hours === 0).length}`);
 
         // Check if we're saving future dates on a SUBMITTED/APPROVED timesheet
         const isSubmittedOrApproved = projectData.timesheet?.status === 'SUBMITTED' || projectData.timesheet?.status === 'APPROVED';
         const hasFutureDates = entries.some((entry) => isDateInFuture(entry.date));
-        
+
         if (isSubmittedOrApproved && hasFutureDates) {
           // Backend will auto-unlock the timesheet (change to RESUBMITTED)
           // This allows saving future dates even when timesheet is SUBMITTED/APPROVED
@@ -399,14 +405,17 @@ export function Timesheet() {
     try {
       // Save and submit each project
       for (const projectData of projects) {
-        // Collect entries for dates within project range, only including entries with hours > 0
+        // Collect ALL entries for dates within project range
+        // Include entries with hours > 0 (to save) AND entries with hours === 0 (to explicitly delete)
         const entries: DateEntry[] = monthDates
           .filter((date) => isDateInProjectRange(date, projectData.project.start_date, projectData.project.end_date))
           .map((date) => {
             const hours = projectData.entries.get(date);
-            return { date, hours: hours || 0 };
+            return { date, hours: hours !== undefined ? hours : 0 };
           })
-          .filter((entry) => entry.hours > 0); // Only include entries with hours > 0
+          .filter((entry) => entry.hours !== undefined); // Include all defined entries
+
+        console.log(`[Submit] Sending ${entries.length} entries for project ${projectData.project.title}`);
 
         let timesheetId: string;
 
@@ -492,7 +501,7 @@ export function Timesheet() {
       console.error('[Edit Timesheet] Frontend error:', err);
       console.error('  Response data:', err.response?.data);
       console.error('  Error message:', err.message);
-      
+
       const errorMessage = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to unlock timesheet for editing';
       setError(errorMessage);
     }
@@ -649,19 +658,18 @@ export function Timesheet() {
                           {projectData.timesheet && (
                             <div className="timesheet-grid-project-status">
                               <span
-                                className={`timesheet-status-badge ${
-                                  isDraft
-                                    ? 'draft'
-                                    : isSubmitted
+                                className={`timesheet-status-badge ${isDraft
+                                  ? 'draft'
+                                  : isSubmitted
                                     ? 'submitted'
                                     : isApproved
-                                    ? 'approved'
-                                    : isRejected
-                                    ? 'rejected'
-                                    : isResubmitted
-                                    ? 'resubmitted'
-                                    : ''
-                                }`}
+                                      ? 'approved'
+                                      : isRejected
+                                        ? 'rejected'
+                                        : isResubmitted
+                                          ? 'resubmitted'
+                                          : ''
+                                  }`}
                               >
                                 {projectData.timesheet.status}
                               </span>
@@ -696,9 +704,9 @@ export function Timesheet() {
                           // - Otherwise editable
                           const dateIsFuture = isDateInFuture(date);
                           const dateIsPast = !dateIsFuture;
-                          const shouldBeReadOnly = 
-                            dateIsPast && 
-                            (isSubmitted || isApproved) && 
+                          const shouldBeReadOnly =
+                            dateIsPast &&
+                            (isSubmitted || isApproved) &&
                             !projectData.isEditing;
 
                           return (

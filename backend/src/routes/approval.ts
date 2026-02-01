@@ -639,6 +639,7 @@ router.get('/projects/:id', verifyAuth, requireRole('ADMIN', 'MANAGER'), async (
         start_date: approvalData.project.start_date,
         end_date: approvalData.project.end_date,
         status: approvalData.project.status,
+        project_logo_url: approvalData.project.project_logo_url || undefined,
       },
       date_range: approvalData.dateRange,
       approval_rows: approvalData.approvalRows,
